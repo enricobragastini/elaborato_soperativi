@@ -6,4 +6,5 @@
 
 #include <sys/stat.h>
 
-static const char *FIFO1_PATHNAME = "/tmp/path_fifo1";
+// TODO : modifica della path
+static const char *FIFO1_NAME = "path_fifo1";
