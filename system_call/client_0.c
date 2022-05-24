@@ -10,6 +10,7 @@
 #include <bits/types/sigset_t.h>
 #include <stdio.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 sigset_t signalSet;
 char *homeDirectory;
@@ -39,11 +40,25 @@ void child(int index){
     filePartsSize[0] = filePartsSize[1] = filePartsSize[2] = baseSize;    
     filePartsSize[3] = charCount - baseSize * 3;
 
+    int file_fd = open(filepath, O_RDONLY);
+    if (file_fd == -1)
+	    ErrExit("error while opening file");
+    // Preparazione 4 messaggi
+
+    char * fileParts[4] = {};
+    for(int i = 0; i < 4; i++){
+        printf("[DEBUG %d] Leggo n=%d caratteri\n", getpid(), filePartsSize[i]);
+        fileParts[i] = calloc(filePartsSize[i], sizeof(char));
+        read(file_fd, fileParts[i], sizeof(char) * filePartsSize[i]);
+    }
+    
+    printf("[DEBUG %d] parte 1: %s\n", getpid(), fileParts[0]);
+    printf("[DEBUG %d] parte 2: %s\n", getpid(), fileParts[1]);
+    printf("[DEBUG %d] parte 3: %s\n", getpid(), fileParts[2]);
+    printf("[DEBUG %d] parte 4: %s\n", getpid(), fileParts[3]);
 
 
-
-
-    // FILE *file_fd = fopen("");
+    close(file_fd);
     exit(0);
 }
 
@@ -56,7 +71,7 @@ void sigIntHandler(){
 
     // apre la fifo
     fifo1_fd = open(FIFO1_NAME, O_WRONLY);
-    
+
     // cambia directory di lavoro
     printf("[DEBUG] cambio cartella di lavoro\n");
     changeDir(workingDirectory);

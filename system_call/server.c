@@ -32,9 +32,12 @@ int create_sem_set(){
 
 int main(int argc, char * argv[]){
 
-    // crea fifo1, set semafori, shared memory
+    // crea fifo1, fifo2, set semafori, shared memory
     if (mkfifo(FIFO1_NAME, S_IRUSR | S_IWUSR) == -1)
         ErrExit("Creating FIFO1 failed");
+
+    // if (mkfifo(FIFO2_NAME, S_IRUSR | S_IWUSR) == -1)
+    //     ErrExit("Creating FIFO2 failed");
 
     int semid = create_sem_set();
     int shmid = alloc_shared_memory(SHM_KEY, sizeof(char)*50);
@@ -58,7 +61,9 @@ int main(int argc, char * argv[]){
     printf("[DEBUG] client ha letto, concludo...\n");
 
     close(fifo1_fd);            // chiusura fifo1
+    // close(fifo2_fd);            // chiusura fifo2
     unlink(FIFO1_NAME);     // unlink fifo1
+    // unlink(FIFO2_NAME);     // unlink fifo2
 
     free_shared_memory(shm_buffer);     // svuota segmento di shared memory
     remove_shared_memory(shmid);        // elimina shared memory
