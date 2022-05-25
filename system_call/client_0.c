@@ -20,39 +20,35 @@ int fifo1_fd;
 char *files_list[100];
 
 void child(int index){
-    printf("[DEBUG] Sono il figlio: %d (index = %d)\n", getpid(), index);
-    printf("[DEBUG] Apro il file: %s\n", files_list[index]);
+    printf("[DEBUG] Sono il figlio: %d (index = %d)\n[DEBUG] Apro il file: %s\n\n", getpid(), index, files_list[index]);
 
-    char * filepath = files_list[index];
+    char * filepath = files_list[index];            // file da leggere
 
-    int charCount = getFileSize(filepath) - 1;
-
+    int charCount = getFileSize(filepath) - 1;      // dimensione totale del file
     if (charCount == 0)
         exit(0);
 
-    int filePartsSize[4] = {};
+    int filePartsSize[4];      // dimensione delle quattro parti del file
 
     // TODO: cosa succede se charCount < 4 ?
+
+    // calcolo le dimensioni delle rispettive quattro porzioni di file
     int baseSize = (charCount % 4 == 0) ? (charCount / 4) : (charCount / 4 + 1);
     filePartsSize[0] = filePartsSize[1] = filePartsSize[2] = baseSize;    
     filePartsSize[3] = charCount - baseSize * 3;
 
+    // apro il file
     int file_fd = open(filepath, O_RDONLY);
     if (file_fd == -1)
 	    ErrExit("error while opening file");
-    // Preparazione 4 messaggi
-
+    
+    // divido il file nelle quattro parti
     char * fileParts[4] = {};
     for(int i = 0; i < 4; i++){
-        printf("[DEBUG %d] Leggo n=%d caratteri\n", getpid(), filePartsSize[i]);
-        fileParts[i] = (char *)calloc(filePartsSize[i], sizeof(char));
-        read(file_fd, fileParts[i], sizeof(char) * filePartsSize[i]);
+        fileParts[i] = (char *)calloc(filePartsSize[i], sizeof(char));      // alloco lo spazio necessario
+        read(file_fd, fileParts[i], sizeof(char) * filePartsSize[i]);       // leggo la porzione di file
     }
     
-    printf("[DEBUG %d] parte 1: %s\n", getpid(), fileParts[0]);
-    printf("[DEBUG %d] parte 2: %s\n", getpid(), fileParts[1]);
-    printf("[DEBUG %d] parte 3: %s\n", getpid(), fileParts[2]);
-    printf("[DEBUG %d] parte 4: %s\n", getpid(), fileParts[3]);
 
 
     close(file_fd);
@@ -76,7 +72,8 @@ void sigIntHandler(){
     printf("Ciao %s, ora inizio l'invio dei file contenuti in %s\n", getUsername(), workingDirectory); 
 
     // conta file con cui lavorare e salva i relativi filename nell'array
-    N = getFiles(workingDirectory, files_list);
+    N = 0;
+    enumerate_dir(workingDirectory, &N, files_list);
 
     printf("[DEBUG] Ho contato N=%d files\n", N);
 
@@ -90,7 +87,7 @@ void sigIntHandler(){
         ErrExit("semget error");
 
     semOp(semid, (unsigned short)WAIT_DATA, -1);
-    printf("[DEBUG] Leggo da Shared Memory: %s\n", shm_buffer);
+    printf("[DEBUG] Leggo da Shared Memory: \"%s\"\n", shm_buffer);
 
     for(int i = 0; i<N; i++){
         pid_t pid = fork();

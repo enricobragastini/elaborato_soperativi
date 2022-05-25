@@ -3,8 +3,11 @@
 ///         specifiche del progetto.
 
 #include "defines.h"
+#include "err_exit.h"
+#include <dirent.h>
 #include <linux/limits.h>
 #include <stdlib.h>
+#include <string.h>
 
 char *getHomeDir(){
     char *homedir = getenv("HOME");             
@@ -45,34 +48,37 @@ int getFileSize(char * pathname){
     return size;
 }
 
-int getFiles(char * directory, char *files_list[]){
-    // DA FARE: ricerca ricorsiva in sottocartelle
-
-    int count = 0;
-
-    DIR *dir = opendir(directory);
-    if (dir == NULL)
-        ErrExit("Couldn't open given folder");
-
-    int errno = 0;
+void enumerate_dir(char * directory, int * count, char *files_list[]){
+    DIR *dir;
     struct dirent *dentry;
     
-    // Iterate until NULL is returned as a result.
+    dir = opendir(directory);       // apro la cartella
+
+    if(dir == NULL)
+        ErrExit("error while opening directory");
+    
     while((dentry = readdir(dir)) != NULL){
-        if(dentry->d_type == DT_REG && beginswith(dentry->d_name, "sendme_") && getFileSize(dentry->d_name) < 4096){
-            files_list[count] = (char *)calloc(PATH_MAX, sizeof(char));     // alloco spazio per il path del file
-            strcpy(files_list[count], directory);           // scrivo la directory
-            strcat(files_list[count], "/");                 // aggiungo uno '/'
-            strcat(files_list[count], dentry->d_name);      // aggiungo il nome del file
-            count++;
+        // se trovo una cartella
+        if(dentry->d_type == DT_DIR){
+            if(strcmp(dentry->d_name, ".") != 0 && strcmp(dentry->d_name, "..") != 0){
+                char * new_dir = (char *)calloc(strlen(directory) + strlen(dentry->d_name) + 1, sizeof(char));
+                sprintf(new_dir, "%s/%s", directory, dentry->d_name);
+                enumerate_dir(new_dir, count, files_list);              // ricerca ricorsiva
+                free(new_dir);
+            }
         }
-        errno = 0;
+        // se trovo un file (che ha un corretto filename)
+        if(dentry->d_type == DT_REG && beginswith(dentry->d_name, "sendme_")){
+            char filepath[strlen(directory) + strlen(dentry->d_name) + 1]; 
+            sprintf(filepath, "%s/%s", directory, dentry->d_name);
+
+            if(getFileSize(filepath) < 4096){
+                // alloco spazio per il suo filename
+                files_list[*count] = (char *)calloc(strlen(directory) + strlen(dentry->d_name) + 1, sizeof(char));
+                strcpy(files_list[*count], filepath);   // salvo il suo filename
+                (*count)++;                             // e aggiorno il conteggio
+            }
+        }
     }
-
-    // NULL is returned on error, and when the end-of-directory is reached!
-    if (errno != 0)
-        ErrExit("Error while reading dir.");
     closedir(dir);
-
-    return count;
 }
