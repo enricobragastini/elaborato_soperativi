@@ -23,10 +23,7 @@ void child(int index){
     printf("[DEBUG] Sono il figlio: %d (index = %d)\n", getpid(), index);
     printf("[DEBUG] Apro il file: %s\n", files_list[index]);
 
-    char filepath[PATH_MAX];                         
-    if (getcwd(filepath, PATH_MAX) == NULL)
-        ErrExit("getcwd failed");
-    strcat(strcat(filepath, "/"), files_list[index]);
+    char * filepath = files_list[index];
 
     int charCount = getFileSize(filepath) - 1;
 
@@ -48,7 +45,7 @@ void child(int index){
     char * fileParts[4] = {};
     for(int i = 0; i < 4; i++){
         printf("[DEBUG %d] Leggo n=%d caratteri\n", getpid(), filePartsSize[i]);
-        fileParts[i] = calloc(filePartsSize[i], sizeof(char));
+        fileParts[i] = (char *)calloc(filePartsSize[i], sizeof(char));
         read(file_fd, fileParts[i], sizeof(char) * filePartsSize[i]);
     }
     
