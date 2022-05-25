@@ -20,8 +20,6 @@ int fifo1_fd;
 char *files_list[100];
 
 void child(int index){
-    printf("[DEBUG] Sono il figlio: %d (index = %d)\n[DEBUG] Apro il file: %s\n\n", getpid(), index, files_list[index]);
-
     char * filepath = files_list[index];            // file da leggere
 
     int charCount = getFileSize(filepath) - 1;      // dimensione totale del file
@@ -49,6 +47,8 @@ void child(int index){
         read(file_fd, fileParts[i], sizeof(char) * filePartsSize[i]);       // leggo la porzione di file
     }
     
+    printf("[DEBUG] Sono il figlio: %d (index = %d)\n[DEBUG] Apro il file: %s\n\tparte 1: %s\n\tparte 2: %s\n\tparte 3: %s\n\tparte 4: %s\n\n", 
+            getpid(), index, filepath, fileParts[0], fileParts[1], fileParts[2], fileParts[3]);
 
 
     close(file_fd);
@@ -75,7 +75,7 @@ void sigIntHandler(){
     N = 0;
     enumerate_dir(workingDirectory, &N, files_list);
 
-    printf("[DEBUG] Ho contato N=%d files\n", N);
+    printf("\n[DEBUG] Ho contato N=%d files\n", N);
 
     write(fifo1_fd, &N, sizeof(N));
 
@@ -87,7 +87,7 @@ void sigIntHandler(){
         ErrExit("semget error");
 
     semOp(semid, (unsigned short)WAIT_DATA, -1);
-    printf("[DEBUG] Leggo da Shared Memory: \"%s\"\n", shm_buffer);
+    printf("[DEBUG] Leggo da Shared Memory: \"%s\"\n\n", shm_buffer);
 
     for(int i = 0; i<N; i++){
         pid_t pid = fork();

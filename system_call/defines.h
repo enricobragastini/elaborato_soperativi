@@ -25,6 +25,6 @@
 char *getHomeDir();
 char *getUsername();
 void changeDir(char *dir);
-bool beginswith(const char *str, const char *prefix);
+bool beginswith(char *str, char *prefix);
 void enumerate_dir(char * directory, int * count, char *files_list[]);
 int getFileSize(char * pathname);

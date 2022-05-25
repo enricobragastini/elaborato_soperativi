@@ -35,7 +35,7 @@ void changeDir(char *dir){
     strcpy(dir, cwd);
 }
 
-bool beginswith(const char *str, const char *prefix){
+bool beginswith(char *str, char *prefix){
     return strncmp(prefix, str, strlen(prefix)) == 0;
 }
 
