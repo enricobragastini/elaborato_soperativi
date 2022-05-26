@@ -6,18 +6,26 @@
 #include "fifo.h"
 #include "semaphore.h"
 #include "shared_memory.h"
+#include "msg_queue.h"
 
 #include <bits/types/sigset_t.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#define CHILDREN_WAIT 0
 
 sigset_t signalSet;
 char *homeDirectory;
 char *workingDirectory;
 int N;
-int fifo1_fd;
+int fifo1_fd, fifo2_fd;
+int msg_queue_id;
 char *files_list[100];
+
+int client_semid;
+unsigned short semInitVal[] = {0};
 
 void child(int index){
     char * filepath = files_list[index];            // file da leggere
@@ -40,19 +48,49 @@ void child(int index){
     if (file_fd == -1)
 	    ErrExit("error while opening file");
     
-    // divido il file nelle quattro parti
-    char * fileParts[4] = {};
-    for(int i = 0; i < 4; i++){
-        fileParts[i] = (char *)calloc(filePartsSize[i], sizeof(char));      // alloco lo spazio necessario
-        read(file_fd, fileParts[i], sizeof(char) * filePartsSize[i]);       // leggo la porzione di file
-    }
-    
-    printf("[DEBUG] Sono il figlio: %d (index = %d)\n[DEBUG] Apro il file: %s\n\tparte 1: %s\n\tparte 2: %s\n\tparte 3: %s\n\tparte 4: %s\n\n", 
-            getpid(), index, filepath, fileParts[0], fileParts[1], fileParts[2], fileParts[3]);
 
+    // divido il file nelle quattro parti
+    message * messages[4] = {};
+    for(int i = 0; i < 4; i++){
+        messages[i] = (message *) malloc(sizeof(message));      // alloco lo spazio necessario
+
+        messages[i]->pid = getpid();                // salvo il pid
+        strcpy(messages[i]->filename, filepath);    // salvo il path del file
+        read(file_fd, messages[i]->msg, sizeof(char) * filePartsSize[i]);       // salvo la porzione di file
+    }
+
+    printf("[DEBUG] Sono il figlio: %d (index = %d)\n[DEBUG] Apro il file: %s\n\tparte 1: %s\n\tparte 2: %s\n\tparte 3: %s\n\tparte 4: %s\n\n", 
+            messages[0]->pid, index, messages[0]->filename, messages[0]->msg, messages[1]->msg, messages[2]->msg, messages[3]->msg);
+    
+    semOp(client_semid, CHILDREN_WAIT, -1);
+    
+    semOp(client_semid, CHILDREN_WAIT, 0);
+    printf("[DEBUG] I client sono pronti all'invio dei file!\n");
+
+    write(fifo1_fd, messages[0], sizeof(message));
+    write(fifo2_fd, messages[1], sizeof(message));
+    if (msgsnd(msg_queue_id, messages[2], sizeof(message), 0) == -1)
+        ErrExit("msgsnd failed");
+    
 
     close(file_fd);
     exit(0);
+}
+
+int create_sem_set(){
+    int totSemaphores = sizeof(semInitVal)/sizeof(unsigned short);      // lunghezza array semafori
+    
+    // genero il set di semafori
+    int semid = semget(IPC_PRIVATE, totSemaphores, IPC_CREAT | S_IRUSR | S_IWUSR);    
+    if (semid == -1)
+        ErrExit("semget failed");
+    
+    union semun arg;
+    arg.array = semInitVal;
+    if (semctl(semid, 0 /*ignored*/, SETALL, arg) == -1)    // imposto i valori iniziali dei semafori
+        ErrExit("semctl SETALL failed");
+
+    return semid;
 }
 
 void sigIntHandler(){
@@ -64,6 +102,7 @@ void sigIntHandler(){
 
     // apre la fifo
     fifo1_fd = open(FIFO1_NAME, O_WRONLY);
+    fifo2_fd = open(FIFO2_NAME, O_WRONLY);
 
     // cambia directory di lavoro
     printf("[DEBUG] cambio cartella di lavoro\n");
@@ -79,15 +118,20 @@ void sigIntHandler(){
 
     write(fifo1_fd, &N, sizeof(N));
 
-    int shmid = alloc_shared_memory(SHM_KEY, sizeof(char)*50);
+    int shmid = alloc_shared_memory(SHM_KEY, SHM_SIZE);
     char *shm_buffer = get_shared_memory(shmid, 0);
 
-    int semid = semget(SEMAPHORE_KEY, 2, S_IRUSR | S_IWUSR);
-    if(semid == -1)
+    msg_queue_id = msgget(MSG_QUEUE_KEY, S_IRUSR | S_IWUSR);
+
+    int server_semid = semget(SEMAPHORE_KEY, 2, S_IRUSR | S_IWUSR);
+    if(server_semid == -1)
         ErrExit("semget error");
 
-    semOp(semid, (unsigned short)WAIT_DATA, -1);
+    semOp(server_semid, (unsigned short)WAIT_DATA, -1);
     printf("[DEBUG] Leggo da Shared Memory: \"%s\"\n\n", shm_buffer);
+
+    semInitVal[0] = N;
+    client_semid = create_sem_set();
 
     for(int i = 0; i<N; i++){
         pid_t pid = fork();
@@ -109,7 +153,7 @@ void sigIntHandler(){
 
     close(fifo1_fd);
     printf("[DEBUG] Ho finito, avviso il server.\n");
-    semOp(semid, (unsigned short)DATA_READY, 1);
+    semOp(server_semid, (unsigned short)DATA_READY, 1);
 }
 
 void sigUsr1Handler(){

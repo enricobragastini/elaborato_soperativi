@@ -28,3 +28,11 @@ void changeDir(char *dir);
 bool beginswith(char *str, char *prefix);
 void enumerate_dir(char * directory, int * count, char *files_list[]);
 int getFileSize(char * pathname);
+
+
+// struct
+typedef struct {
+    char msg[1024/sizeof(char)];
+    int pid;
+    char filename[PATH_MAX];
+} message;

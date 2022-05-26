@@ -3,6 +3,7 @@
 
 #include "err_exit.h"
 #include "defines.h"
+#include "msg_queue.h"
 #include "shared_memory.h"
 #include "semaphore.h"
 #include "fifo.h"
@@ -10,7 +11,7 @@
 #include <unistd.h>
 
 int N;
-int fifo1_fd;
+int fifo1_fd, fifo2_fd;
 int semid;
 unsigned short semInitVal[] = {0, 0};
 
@@ -36,15 +37,21 @@ int main(int argc, char * argv[]){
     if (mkfifo(FIFO1_NAME, S_IRUSR | S_IWUSR) == -1)
         ErrExit("Creating FIFO1 failed");
 
-    // if (mkfifo(FIFO2_NAME, S_IRUSR | S_IWUSR) == -1)
-    //     ErrExit("Creating FIFO2 failed");
+    if (mkfifo(FIFO2_NAME, S_IRUSR | S_IWUSR) == -1)
+        ErrExit("Creating FIFO2 failed");
+
+    int msg_queue_id = msgget(MSG_QUEUE_KEY, IPC_CREAT | S_IRUSR | S_IWUSR);
+    if(msg_queue_id == -1)
+        ErrExit("msgget failed");
 
     int semid = create_sem_set();
-    int shmid = alloc_shared_memory(SHM_KEY, sizeof(char)*50);
+    int shmid = alloc_shared_memory(SHM_KEY, SHM_SIZE);
 
     printf("[DEBUG] Lavoro su FIFO %s\n", FIFO1_NAME);
 
     fifo1_fd = open(FIFO1_NAME, O_RDONLY);
+    fifo2_fd = open(FIFO2_NAME, O_RDONLY);
+
     if(read(fifo1_fd, &N, sizeof(N)) != sizeof(N))
         ErrExit("error while reading N from FIFO1");
 
@@ -57,16 +64,20 @@ int main(int argc, char * argv[]){
     semOp(semid, (unsigned short)WAIT_DATA, 1);
     printf("[DEBUG] dati su SHM, sblocco il client\n");
 
+    
+    
     semOp(semid, (unsigned short)DATA_READY, -1);
     printf("[DEBUG] client ha letto, concludo...\n");
 
     close(fifo1_fd);            // chiusura fifo1
-    // close(fifo2_fd);            // chiusura fifo2
-    unlink(FIFO1_NAME);     // unlink fifo1
-    // unlink(FIFO2_NAME);     // unlink fifo2
+    close(fifo2_fd);            // chiusura fifo2
+    unlink(FIFO1_NAME);         // unlink fifo1
+    unlink(FIFO2_NAME);         // unlink fifo2
 
     free_shared_memory(shm_buffer);     // svuota segmento di shared memory
     remove_shared_memory(shmid);        // elimina shared memory
+
+    msgctl(msg_queue_id, IPC_RMID, NULL);   // chiusura msg queue
 
     // Eliminazione set semafori
     if (semctl(semid, 0 /*ignored*/, IPC_RMID, NULL) == -1)

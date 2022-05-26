@@ -63,6 +63,7 @@ void enumerate_dir(char * directory, int * count, char *files_list[]){
             if(strcmp(dentry->d_name, ".") != 0 && strcmp(dentry->d_name, "..") != 0){
                 char * new_dir = (char *)calloc(strlen(directory) + strlen(dentry->d_name) + 1, sizeof(char));
                 sprintf(new_dir, "%s/%s", directory, dentry->d_name);
+                
                 enumerate_dir(new_dir, count, files_list);              // ricerca ricorsiva
                 free(new_dir);
             }

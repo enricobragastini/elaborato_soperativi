@@ -10,6 +10,8 @@
 
 #define SHM_KEY 5316
 
+static int SHM_SIZE = (4096 / 4 * 100);
+
 int alloc_shared_memory(key_t shmKey, size_t size);
 void *get_shared_memory(int shmid, int shmflg);
 void free_shared_memory(void *ptr_sh);
