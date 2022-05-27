@@ -11,9 +11,13 @@
 #include <unistd.h>
 
 int N;
+sigset_t signalSet;
 int fifo1_fd, fifo2_fd;
-int semid;
-unsigned short semInitVal[] = {0, 0};
+int semid, shmid;
+int msg_queue_id;
+message *shm_buffer;
+unsigned short semInitVal[] = {0, 0, 50, 50, 50, 50};
+message files_parts[100][4];
 
 int create_sem_set(){
     int totSemaphores = sizeof(semInitVal)/sizeof(unsigned short);      // lunghezza array semafori
@@ -31,7 +35,37 @@ int create_sem_set(){
     return semid;
 }
 
+void remove_ipcs(){
+    close(fifo1_fd);            // chiusura fifo1
+    close(fifo2_fd);            // chiusura fifo2
+    unlink(FIFO1_NAME);         // unlink fifo1
+    unlink(FIFO2_NAME);         // unlink fifo2
+
+    free_shared_memory(shm_buffer);     // svuota segmento di shared memory
+    remove_shared_memory(shmid);        // elimina shared memory
+
+    // Rimozione message queue
+    if(msgctl(msg_queue_id, IPC_RMID, NULL) == -1)   // chiusura msg queue
+        ErrExit("Message queue could not be deleted");
+
+    // Rimozione set semafori
+    if (semctl(semid, 0 /*ignored*/, IPC_RMID, NULL) == -1)
+        ErrExit("semctl IPC_RMID failed");
+    exit(0);
+}
+
+
 int main(int argc, char * argv[]){
+
+    // creazione set di segnali
+    sigfillset(&signalSet);
+    sigdelset(&signalSet, SIGINT);
+
+    // assegnazione del set alla maschera
+    sigprocmask(SIG_SETMASK, &signalSet, NULL);
+
+    if (signal(SIGINT, remove_ipcs) == SIG_ERR)
+        ErrExit("sigint change signal handler failed");
 
     // crea fifo1, fifo2, set semafori, shared memory
     if (mkfifo(FIFO1_NAME, S_IRUSR | S_IWUSR) == -1)
@@ -40,12 +74,13 @@ int main(int argc, char * argv[]){
     if (mkfifo(FIFO2_NAME, S_IRUSR | S_IWUSR) == -1)
         ErrExit("Creating FIFO2 failed");
 
-    int msg_queue_id = msgget(MSG_QUEUE_KEY, IPC_CREAT | S_IRUSR | S_IWUSR);
+    msg_queue_id = msgget(MSG_QUEUE_KEY, IPC_CREAT | S_IRUSR | S_IWUSR);
     if(msg_queue_id == -1)
         ErrExit("msgget failed");
 
-    int semid = create_sem_set();
-    int shmid = alloc_shared_memory(SHM_KEY, SHM_SIZE);
+    semid = create_sem_set();
+
+    shmid = alloc_shared_memory(SHM_KEY, SHM_SIZE);
 
     printf("[DEBUG] Lavoro su FIFO %s\n", FIFO1_NAME);
 
@@ -57,30 +92,43 @@ int main(int argc, char * argv[]){
 
     printf("[DEBUG] Ho letto N: %d\n", N);
 
-    char *shm_buffer = get_shared_memory(shmid, 0);
+    shm_buffer = (message *) get_shared_memory(shmid, 0);
     
-    sprintf(shm_buffer, "N is equal to %d", N);
+    sprintf(shm_buffer[0].msg, "N is equal to %d", N);
 
     semOp(semid, (unsigned short)WAIT_DATA, 1);
     printf("[DEBUG] dati su SHM, sblocco il client\n");
 
+    int received = 0;
+    message fifo1_msg, fifo2_msg;
+    msgqueue_message msgqueue_msg;
+
+
+    while(received < N){
+        if(read(fifo1_fd, &fifo1_msg, sizeof(message)) != sizeof(message))
+            ErrExit("error while reading message from FIFO1");
+        
+        if(read(fifo2_fd, &fifo2_msg, sizeof(message)) != sizeof(message))
+            ErrExit("error while reading message from FIFO2");
+
+        if (msgrcv(msg_queue_id, &msgqueue_msg, sizeof(msgqueue_message) - sizeof(long), 0, 0) == -1)
+            ErrExit("error while reading message from Message Queue");
+
+        printf("[DEBUG] Reading from fifo1: [%s, %d, %s]\n", fifo1_msg.msg, fifo1_msg.pid, fifo1_msg.filename);
+        printf("[DEBUG] Reading from fifo2: [%s, %d, %s]\n", fifo2_msg.msg, fifo2_msg.pid, fifo2_msg.filename);
+        printf("[DEBUG] Reading from msgqueue: [%s, %d, %s]\n", msgqueue_msg.payload.msg, msgqueue_msg.payload.pid, msgqueue_msg.payload.filename);
+
+        received++;
+    }
+
+    for(int i = 0; i<N; i++){
+        printf("[DEBUG] Reading from shm: [%s, %d, %s]\n", shm_buffer[i].msg, shm_buffer[i].pid, shm_buffer[i].filename);
+    }
     
     
     semOp(semid, (unsigned short)DATA_READY, -1);
-    printf("[DEBUG] client ha letto, concludo...\n");
+    printf("[DEBUG] client ha finito, concludo...\n");
 
-    close(fifo1_fd);            // chiusura fifo1
-    close(fifo2_fd);            // chiusura fifo2
-    unlink(FIFO1_NAME);         // unlink fifo1
-    unlink(FIFO2_NAME);         // unlink fifo2
-
-    free_shared_memory(shm_buffer);     // svuota segmento di shared memory
-    remove_shared_memory(shmid);        // elimina shared memory
-
-    msgctl(msg_queue_id, IPC_RMID, NULL);   // chiusura msg queue
-
-    // Eliminazione set semafori
-    if (semctl(semid, 0 /*ignored*/, IPC_RMID, NULL) == -1)
-        ErrExit("semctl IPC_RMID failed");
+    remove_ipcs();
     return 0;
 }

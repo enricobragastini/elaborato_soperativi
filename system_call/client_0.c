@@ -10,6 +10,7 @@
 
 #include <bits/types/sigset_t.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -20,8 +21,11 @@ sigset_t signalSet;
 char *homeDirectory;
 char *workingDirectory;
 int N;
+int server_semid;
 int fifo1_fd, fifo2_fd;
 int msg_queue_id;
+int shmid;
+message *shm_address;
 char *files_list[100];
 
 int client_semid;
@@ -47,10 +51,12 @@ void child(int index){
     int file_fd = open(filepath, O_RDONLY);
     if (file_fd == -1)
 	    ErrExit("error while opening file");
-    
+
+    msgqueue_message msgq_msg;
+    msgq_msg.mtype = 1;
 
     // divido il file nelle quattro parti
-    message * messages[4] = {};
+    message * messages[4];
     for(int i = 0; i < 4; i++){
         messages[i] = (message *) malloc(sizeof(message));      // alloco lo spazio necessario
 
@@ -62,16 +68,35 @@ void child(int index){
     printf("[DEBUG] Sono il figlio: %d (index = %d)\n[DEBUG] Apro il file: %s\n\tparte 1: %s\n\tparte 2: %s\n\tparte 3: %s\n\tparte 4: %s\n\n", 
             messages[0]->pid, index, messages[0]->filename, messages[0]->msg, messages[1]->msg, messages[2]->msg, messages[3]->msg);
     
-    semOp(client_semid, CHILDREN_WAIT, -1);
-    
+    semOp(client_semid, CHILDREN_WAIT, -1);    
     semOp(client_semid, CHILDREN_WAIT, 0);
     printf("[DEBUG] I client sono pronti all'invio dei file!\n");
 
-    write(fifo1_fd, messages[0], sizeof(message));
-    write(fifo2_fd, messages[1], sizeof(message));
-    if (msgsnd(msg_queue_id, messages[2], sizeof(message), 0) == -1)
+    semOp(server_semid, FIFO1_SEM, -1);
+    if(write(fifo1_fd, messages[0], sizeof(message)) != sizeof(message))    // message to fifo1
+        ErrExit("fifo1 write() failed");
+    semOp(server_semid, FIFO1_SEM, 1);
+
+    semOp(server_semid, FIFO2_SEM, -1);
+    if(write(fifo2_fd, messages[1], sizeof(message)) != sizeof(message))    // message to fifo2
+        ErrExit("fifo2 write() failed");
+    semOp(server_semid, FIFO2_SEM, 1);
+
+    semOp(server_semid, MSGQ_SEM, -1);
+    msgq_msg.payload = *(messages[2]);
+    if (msgsnd(msg_queue_id, &msgq_msg, sizeof(msgqueue_message) - sizeof(long), 0) == -1)                    // message to message queue
         ErrExit("msgsnd failed");
+    semOp(server_semid, MSGQ_SEM, 1);
     
+    semOp(server_semid, SHM_SEM, -1);
+    strcpy(shm_address[index].filename, messages[3]->filename);             // message to shared memory
+    shm_address[index].pid = messages[3]->pid;
+    strcpy(shm_address[index].msg, messages[3]->msg);
+    semOp(server_semid, SHM_SEM, -1);
+
+    for(int i = 0; i < 4; i++){
+        free(messages[i]);
+    }
 
     close(file_fd);
     exit(0);
@@ -118,17 +143,18 @@ void sigIntHandler(){
 
     write(fifo1_fd, &N, sizeof(N));
 
-    int shmid = alloc_shared_memory(SHM_KEY, SHM_SIZE);
-    char *shm_buffer = get_shared_memory(shmid, 0);
+    // shared memory
+    shmid = alloc_shared_memory(SHM_KEY, SHM_SIZE);
+    shm_address = (message *) get_shared_memory(shmid, 0);
 
     msg_queue_id = msgget(MSG_QUEUE_KEY, S_IRUSR | S_IWUSR);
 
-    int server_semid = semget(SEMAPHORE_KEY, 2, S_IRUSR | S_IWUSR);
+    server_semid = semget(SEMAPHORE_KEY, 6, S_IRUSR | S_IWUSR);
     if(server_semid == -1)
         ErrExit("semget error");
 
     semOp(server_semid, (unsigned short)WAIT_DATA, -1);
-    printf("[DEBUG] Leggo da Shared Memory: \"%s\"\n\n", shm_buffer);
+    printf("[DEBUG] Leggo da Shared Memory: \"%s\"\n\n", shm_address[0].msg);
 
     semInitVal[0] = N;
     client_semid = create_sem_set();

@@ -36,3 +36,8 @@ typedef struct {
     int pid;
     char filename[PATH_MAX];
 } message;
+
+typedef struct {
+    long mtype;
+    message payload;
+} msgqueue_message;

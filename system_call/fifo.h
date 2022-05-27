@@ -7,5 +7,5 @@
 #include <sys/stat.h>
 
 // TODO : modifica della path
-static const char *FIFO1_NAME = "path_fifo1";
-static const char *FIFO2_NAME = "path_fifo2";
+static const char * const FIFO1_NAME = "path_fifo1";
+static const char * const FIFO2_NAME = "path_fifo2";

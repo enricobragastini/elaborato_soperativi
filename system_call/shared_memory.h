@@ -8,9 +8,11 @@
 #include <sys/stat.h>
 #include <stdlib.h>
 
+#include "defines.h"
+
 #define SHM_KEY 5316
 
-static int SHM_SIZE = (4096 / 4 * 100);
+static const int SHM_SIZE = (sizeof(message) * 50);
 
 int alloc_shared_memory(key_t shmKey, size_t size);
 void *get_shared_memory(int shmid, int shmflg);
