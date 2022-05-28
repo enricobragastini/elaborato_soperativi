@@ -13,10 +13,11 @@
 int N;
 sigset_t signalSet;
 int fifo1_fd, fifo2_fd;
-int semid, shmid;
+int semid, shmid, shm_flags_id;
 int msg_queue_id;
 message *shm_buffer;
-unsigned short semInitVal[] = {0, 0, 50, 50, 50, 50};
+int *shm_flags;
+unsigned short semInitVal[] = {0, 0, 50, 50, 50, 50, 0};
 message files_parts[100][4];
 
 int create_sem_set(){
@@ -81,6 +82,7 @@ int main(int argc, char * argv[]){
     semid = create_sem_set();
 
     shmid = alloc_shared_memory(SHM_KEY, SHM_SIZE);
+    shm_flags_id = alloc_shared_memory(SHM_FLAGS_KEY, SHM_FLAGS_SIZE);
 
     printf("[DEBUG] Lavoro su FIFO %s\n", FIFO1_NAME);
 
@@ -100,9 +102,9 @@ int main(int argc, char * argv[]){
     printf("[DEBUG] dati su SHM, sblocco il client\n");
 
     int received = 0;
+
     message fifo1_msg, fifo2_msg;
     msgqueue_message msgqueue_msg;
-
 
     while(received < N){
         if(read(fifo1_fd, &fifo1_msg, sizeof(message)) != sizeof(message))

@@ -11,8 +11,10 @@
 #include "defines.h"
 
 #define SHM_KEY 5316
+#define SHM_FLAGS_KEY 5317
 
 static const int SHM_SIZE = (sizeof(message) * 50);
+static const int SHM_FLAGS_SIZE = (sizeof(bool) * 50);
 
 int alloc_shared_memory(key_t shmKey, size_t size);
 void *get_shared_memory(int shmid, int shmflg);

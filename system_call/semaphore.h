@@ -10,12 +10,13 @@
 #define SEMAPHORE_KEY 1999
 
 // server semaphores
-#define WAIT_DATA   0
-#define DATA_READY  1
-#define FIFO1_SEM   2
-#define FIFO2_SEM   3 
-#define MSGQ_SEM    4
-#define SHM_SEM     5
+#define WAIT_DATA           0
+#define DATA_READY          1
+#define FIFO1_SEM           2
+#define FIFO2_SEM           3 
+#define MSGQ_SEM            4
+#define SHM_SEM             5
+#define SHM_FLAGS_SEM       6
 
 union semun {
     int              val;    /* Value for SETVAL */

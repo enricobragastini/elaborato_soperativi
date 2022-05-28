@@ -24,12 +24,31 @@ int N;
 int server_semid;
 int fifo1_fd, fifo2_fd;
 int msg_queue_id;
-int shmid;
+int shmid, shm_flags_id;
+int *shm_flags_address;
 message *shm_address;
 char *files_list[100];
 
 int client_semid;
 unsigned short semInitVal[] = {0};
+
+void shm_write(message *msg){
+    // richiede accesso ad array flags
+    semOp(server_semid, SHM_FLAGS_SEM, -1);
+
+    int index;      // posizione in cui si puó scrivere
+    if((index = findSHM(shm_flags_address, 0)) == -1)
+        ErrExit("findSHM failed");
+    
+    // copia del messaggio in shared memory
+    memcpy(&shm_address[index], msg, sizeof(message));
+
+    // segnalo che la posizione é occupata
+    shm_flags_address[index] = 1;
+
+    // restituisce accesso ad array flags
+    semOp(server_semid, SHM_FLAGS_SEM, 1);
+}
 
 void child(int index){
     char * filepath = files_list[index];            // file da leggere
@@ -52,9 +71,6 @@ void child(int index){
     if (file_fd == -1)
 	    ErrExit("error while opening file");
 
-    msgqueue_message msgq_msg;
-    msgq_msg.mtype = 1;
-
     // divido il file nelle quattro parti
     message * messages[4];
     for(int i = 0; i < 4; i++){
@@ -75,29 +91,24 @@ void child(int index){
     semOp(server_semid, FIFO1_SEM, -1);
     if(write(fifo1_fd, messages[0], sizeof(message)) != sizeof(message))    // message to fifo1
         ErrExit("fifo1 write() failed");
-    semOp(server_semid, FIFO1_SEM, 1);
 
     semOp(server_semid, FIFO2_SEM, -1);
     if(write(fifo2_fd, messages[1], sizeof(message)) != sizeof(message))    // message to fifo2
         ErrExit("fifo2 write() failed");
-    semOp(server_semid, FIFO2_SEM, 1);
+
+    msgqueue_message msgq_msg;
+    msgq_msg.mtype = 1;
+    msgq_msg.payload = *(messages[2]);
 
     semOp(server_semid, MSGQ_SEM, -1);
-    msgq_msg.payload = *(messages[2]);
     if (msgsnd(msg_queue_id, &msgq_msg, sizeof(msgqueue_message) - sizeof(long), 0) == -1)                    // message to message queue
         ErrExit("msgsnd failed");
-    semOp(server_semid, MSGQ_SEM, 1);
     
     semOp(server_semid, SHM_SEM, -1);
-    strcpy(shm_address[index].filename, messages[3]->filename);             // message to shared memory
-    shm_address[index].pid = messages[3]->pid;
-    strcpy(shm_address[index].msg, messages[3]->msg);
-    semOp(server_semid, SHM_SEM, -1);
+    shm_write(messages[3]);
 
-    for(int i = 0; i < 4; i++){
+    for(int i = 0; i < 4; i++)
         free(messages[i]);
-    }
-
     close(file_fd);
     exit(0);
 }
@@ -141,11 +152,15 @@ void sigIntHandler(){
 
     printf("\n[DEBUG] Ho contato N=%d files\n", N);
 
+    // Scrive N su fifo1
     write(fifo1_fd, &N, sizeof(N));
 
     // shared memory
     shmid = alloc_shared_memory(SHM_KEY, SHM_SIZE);
     shm_address = (message *) get_shared_memory(shmid, 0);
+
+    shm_flags_id = alloc_shared_memory(SHM_FLAGS_KEY, SHM_FLAGS_SIZE);
+    shm_flags_address = (int *) get_shared_memory(shm_flags_id, 0);
 
     msg_queue_id = msgget(MSG_QUEUE_KEY, S_IRUSR | S_IWUSR);
 
@@ -153,6 +168,7 @@ void sigIntHandler(){
     if(server_semid == -1)
         ErrExit("semget error");
 
+    // Attende conferma dal server su shared memory
     semOp(server_semid, (unsigned short)WAIT_DATA, -1);
     printf("[DEBUG] Leggo da Shared Memory: \"%s\"\n\n", shm_address[0].msg);
 

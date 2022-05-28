@@ -28,6 +28,7 @@ void changeDir(char *dir);
 bool beginswith(char *str, char *prefix);
 void enumerate_dir(char * directory, int * count, char *files_list[]);
 int getFileSize(char * pathname);
+int findSHM(int *shm, bool value);
 
 
 // struct
