@@ -84,7 +84,7 @@ void enumerate_dir(char * directory, int * count, char *files_list[]){
     closedir(dir);
 }
 
-int findSHM(int *shm, bool value){
+int findSHM(bool *shm, bool value){
     // Cerca posizione libera (o occupata)
     // nell'array di supporto alla shared memory
 

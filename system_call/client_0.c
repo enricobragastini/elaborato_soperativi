@@ -25,7 +25,7 @@ int server_semid;
 int fifo1_fd, fifo2_fd;
 int msg_queue_id;
 int shmid, shm_flags_id;
-int *shm_flags_address;
+bool *shm_flags_address;
 message *shm_address;
 char *files_list[100];
 
@@ -76,6 +76,7 @@ void child(int index){
     for(int i = 0; i < 4; i++){
         messages[i] = (message *) malloc(sizeof(message));      // alloco lo spazio necessario
 
+        messages[i]->index = index;
         messages[i]->pid = getpid();                // salvo il pid
         strcpy(messages[i]->filename, filepath);    // salvo il path del file
         read(file_fd, messages[i]->msg, sizeof(char) * filePartsSize[i]);       // salvo la porzione di file
@@ -160,7 +161,7 @@ void sigIntHandler(){
     shm_address = (message *) get_shared_memory(shmid, 0);
 
     shm_flags_id = alloc_shared_memory(SHM_FLAGS_KEY, SHM_FLAGS_SIZE);
-    shm_flags_address = (int *) get_shared_memory(shm_flags_id, 0);
+    shm_flags_address = (bool *) get_shared_memory(shm_flags_id, 0);
 
     msg_queue_id = msgget(MSG_QUEUE_KEY, S_IRUSR | S_IWUSR);
 

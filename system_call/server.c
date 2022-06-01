@@ -7,8 +7,11 @@
 #include "shared_memory.h"
 #include "semaphore.h"
 #include "fifo.h"
+#include <linux/limits.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
+#include <libgen.h>
 
 int N;
 sigset_t signalSet;
@@ -16,9 +19,8 @@ int fifo1_fd, fifo2_fd;
 int semid, shmid, shm_flags_id;
 int msg_queue_id;
 message *shm_buffer;
-int *shm_flags;
-unsigned short semInitVal[] = {0, 0, 50, 50, 50, 50, 0};
-message files_parts[100][4];
+bool *shm_flags;
+unsigned short semInitVal[] = {0, 0, 50, 50, 50, 50, 1};
 
 int create_sem_set(){
     int totSemaphores = sizeof(semInitVal)/sizeof(unsigned short);      // lunghezza array semafori
@@ -56,8 +58,43 @@ void remove_ipcs(){
 }
 
 
-int main(int argc, char * argv[]){
+void write_on_file(int row, message * files_parts[N][4]){
+    char * path_in = files_parts[row][0]->filename;        // full path file di input
+    
+    char path_out[PATH_MAX];                            // nome file output (con '_out')
+    strcpy(path_out, path_in);
+    strcat(path_out, "_out");
 
+    FILE *file_out;
+    if((file_out = fopen(path_out, "wt")) == NULL)
+		ErrExit("fopen failed");
+
+    char * ipcs[4] = {"FIFO1", "FIFO2", "msgQueue", "ShdMem"};
+
+    for(int i = 0; i<4; i++){
+        fprintf(file_out, "[Parte %d, del file %s, spedita dal processo %d tramite %s]\n%s\n", 
+        i, path_in, files_parts[row][i]->pid, ipcs[i], files_parts[row][i]->msg);
+        if(i != 3)
+            fprintf(file_out, "\n");
+        free(files_parts[row][i]);
+    }
+    fclose(file_out);
+}
+
+void update_parts(message * msg, int row, int ipc_index, message * files_parts[N][4], int * contatori, int * ipc_count){
+    files_parts[row][ipc_index] = (message *) malloc(sizeof(message));
+    memcpy(files_parts[row][ipc_index], msg, sizeof(message));
+    // printf("file_parts: %s, msg: %s\n", files_parts[row][ipc_index]->msg, msg->msg);
+
+    ipc_count[ipc_index]++;
+
+    contatori[row]++;
+    if(contatori[row] == 4)
+        write_on_file(row, files_parts);
+}
+
+
+int main(int argc, char * argv[]){
     // creazione set di segnali
     sigfillset(&signalSet);
     sigdelset(&signalSet, SIGINT);
@@ -95,38 +132,72 @@ int main(int argc, char * argv[]){
     printf("[DEBUG] Ho letto N: %d\n", N);
 
     shm_buffer = (message *) get_shared_memory(shmid, 0);
+    shm_flags = (bool *) get_shared_memory(shm_flags_id, 0);
+
+    for(int i = 0; i<50; i++)
+        shm_flags[i] = false;
     
     sprintf(shm_buffer[0].msg, "N is equal to %d", N);
 
     semOp(semid, (unsigned short)WAIT_DATA, 1);
     printf("[DEBUG] dati su SHM, sblocco il client\n");
 
-    int received = 0;
 
-    message fifo1_msg, fifo2_msg;
-    msgqueue_message msgqueue_msg;
+    message msg_buffer;
+    msgqueue_message msgq_buffer;
+    int index_shm;
 
-    while(received < N){
-        if(read(fifo1_fd, &fifo1_msg, sizeof(message)) != sizeof(message))
-            ErrExit("error while reading message from FIFO1");
-        
-        if(read(fifo2_fd, &fifo2_msg, sizeof(message)) != sizeof(message))
-            ErrExit("error while reading message from FIFO2");
+    message * files_parts[N][4];
+    int contatori[N];
+    int ipc_count[4] = {0};
 
-        if (msgrcv(msg_queue_id, &msgqueue_msg, sizeof(msgqueue_message) - sizeof(long), 0, 0) == -1)
-            ErrExit("error while reading message from Message Queue");
+    memset(contatori, 0, sizeof(int) * N);
 
-        printf("[DEBUG] Reading from fifo1: [%s, %d, %s]\n", fifo1_msg.msg, fifo1_msg.pid, fifo1_msg.filename);
-        printf("[DEBUG] Reading from fifo2: [%s, %d, %s]\n", fifo2_msg.msg, fifo2_msg.pid, fifo2_msg.filename);
-        printf("[DEBUG] Reading from msgqueue: [%s, %d, %s]\n", msgqueue_msg.payload.msg, msgqueue_msg.payload.pid, msgqueue_msg.payload.filename);
+    while(ipc_count[0] < N || ipc_count[1] < N || ipc_count[2] < N || ipc_count[3] < N){
+        if(ipc_count[0] < N){
+            if(read(fifo1_fd, &msg_buffer, sizeof(message)) != sizeof(message))
+                ErrExit("error while reading message from FIFO1");
+            semOp(semid, FIFO1_SEM, 1);
+            
+            update_parts(&msg_buffer, msg_buffer.index, 0, files_parts, contatori, ipc_count);
+        }
+        if(ipc_count[1] < N){
+            if(read(fifo2_fd, &msg_buffer, sizeof(message)) != sizeof(message))
+                ErrExit("error while reading message from FIFO2");
+            semOp(semid, FIFO2_SEM, 1);
+            
+            update_parts(&msg_buffer, msg_buffer.index, 1, files_parts, contatori, ipc_count);
+        }
+        if(ipc_count[2] < N){
+            if (msgrcv(msg_queue_id, &msgq_buffer, sizeof(msgqueue_message) - sizeof(long), 0, 0) == -1)
+                ErrExit("error while reading message from Message Queue");
+            semOp(semid, MSGQ_SEM, 1);
 
-        received++;
+            update_parts(&(msgq_buffer.payload), msgq_buffer.payload.index, 2, files_parts, contatori, ipc_count);
+        }
+        if(ipc_count[3] < N){
+            semOp(semid, SHM_FLAGS_SEM, -1);
+            if((index_shm = findSHM(shm_flags, true)) == -1){
+                semOp(semid, SHM_FLAGS_SEM, 1);
+                continue;
+            }
+
+            update_parts(&shm_buffer[index_shm], shm_buffer[index_shm].index, 3, files_parts, contatori, ipc_count);
+
+            shm_flags[index_shm] = false;
+            semOp(semid, SHM_FLAGS_SEM, 1);
+            semOp(semid, SHM_SEM, 1);
+        }
     }
 
-    for(int i = 0; i<N; i++){
-        printf("[DEBUG] Reading from shm: [%s, %d, %s]\n", shm_buffer[i].msg, shm_buffer[i].pid, shm_buffer[i].filename);
-    }
-    
+    printf("N: %d\n", N);
+    for(int r = 0; r<N; r++){
+        printf("riga %d\n", r);
+        for(int i = 0; i<4; i++){
+            printf("%d) pid: %d, filename: %s, msg: %s\n", i, files_parts[r][i]->pid, files_parts[r][i]->filename, files_parts[r][i]->msg);
+        }
+        printf("\n\n");
+    }    
     
     semOp(semid, (unsigned short)DATA_READY, -1);
     printf("[DEBUG] client ha finito, concludo...\n");
