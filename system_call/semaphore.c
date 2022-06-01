@@ -16,18 +16,3 @@ void semOp(int semid, unsigned short sem_num, short sem_op) {
         ErrExit("semop failed");
     }
 }
-
-void printSemaphoresValue (int semid) {
-    unsigned short semVal[2];
-    union semun arg;
-    arg.array = semVal;
-
-    // get the current state of the set
-    if (semctl(semid, 0 /*ignored*/, GETALL, arg) == -1)
-        ErrExit("semctl GETALL failed");
-
-    // print the semaphore's value
-    printf("semaphore set state:\n");
-    for (int i = 0; i < 2; i++)
-        printf("id: %d --> %d\n", i, semVal[i]);
-}

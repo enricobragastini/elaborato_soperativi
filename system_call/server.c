@@ -84,7 +84,6 @@ void write_on_file(int row, message * files_parts[N][4]){
 void update_parts(message * msg, int row, int ipc_index, message * files_parts[N][4], int * contatori, int * ipc_count){
     files_parts[row][ipc_index] = (message *) malloc(sizeof(message));
     memcpy(files_parts[row][ipc_index], msg, sizeof(message));
-    // printf("file_parts: %s, msg: %s\n", files_parts[row][ipc_index]->msg, msg->msg);
 
     ipc_count[ipc_index]++;
 
@@ -121,86 +120,93 @@ int main(int argc, char * argv[]){
     shmid = alloc_shared_memory(SHM_KEY, SHM_SIZE);
     shm_flags_id = alloc_shared_memory(SHM_FLAGS_KEY, SHM_FLAGS_SIZE);
 
-    printf("[DEBUG] Lavoro su FIFO %s\n", FIFO1_NAME);
 
     fifo1_fd = open(FIFO1_NAME, O_RDONLY);
     fifo2_fd = open(FIFO2_NAME, O_RDONLY);
 
-    if(read(fifo1_fd, &N, sizeof(N)) != sizeof(N))
-        ErrExit("error while reading N from FIFO1");
+    while(true){
+        printf("[DEBUG] Attendo N su fifo1...\n");
+        if(read(fifo1_fd, &N, sizeof(N)) != sizeof(N))
+            ErrExit("error while reading N from FIFO1");
+        printf("[DEBUG] Ho ricevuto N su fifo1! N=%d\n", N);
 
-    printf("[DEBUG] Ho letto N: %d\n", N);
+        shm_buffer = (message *) get_shared_memory(shmid, 0);
+        shm_flags = (bool *) get_shared_memory(shm_flags_id, 0);
 
-    shm_buffer = (message *) get_shared_memory(shmid, 0);
-    shm_flags = (bool *) get_shared_memory(shm_flags_id, 0);
+        for(int i = 0; i<50; i++)
+            shm_flags[i] = false;
+        
+        sprintf(shm_buffer[0].msg, "N is equal to %d", N);
+        printf("[DEBUG] Ho scritto su Shared Memory!\n");
 
-    for(int i = 0; i<50; i++)
-        shm_flags[i] = false;
-    
-    sprintf(shm_buffer[0].msg, "N is equal to %d", N);
+        semOp(semid, (unsigned short)WAIT_DATA, 1);
 
-    semOp(semid, (unsigned short)WAIT_DATA, 1);
-    printf("[DEBUG] dati su SHM, sblocco il client\n");
+        message msg_buffer;
+        msgqueue_message msgq_buffer;
+        int index_shm;
 
+        message * files_parts[N][4];
+        int contatori[N];
+        int ipc_count[4] = {0};
 
-    message msg_buffer;
-    msgqueue_message msgq_buffer;
-    int index_shm;
+        memset(contatori, 0, sizeof(int) * N);
 
-    message * files_parts[N][4];
-    int contatori[N];
-    int ipc_count[4] = {0};
-
-    memset(contatori, 0, sizeof(int) * N);
-
-    while(ipc_count[0] < N || ipc_count[1] < N || ipc_count[2] < N || ipc_count[3] < N){
-        if(ipc_count[0] < N){
-            if(read(fifo1_fd, &msg_buffer, sizeof(message)) != sizeof(message))
-                ErrExit("error while reading message from FIFO1");
-            semOp(semid, FIFO1_SEM, 1);
-            
-            update_parts(&msg_buffer, msg_buffer.index, 0, files_parts, contatori, ipc_count);
-        }
-        if(ipc_count[1] < N){
-            if(read(fifo2_fd, &msg_buffer, sizeof(message)) != sizeof(message))
-                ErrExit("error while reading message from FIFO2");
-            semOp(semid, FIFO2_SEM, 1);
-            
-            update_parts(&msg_buffer, msg_buffer.index, 1, files_parts, contatori, ipc_count);
-        }
-        if(ipc_count[2] < N){
-            if (msgrcv(msg_queue_id, &msgq_buffer, sizeof(msgqueue_message) - sizeof(long), 0, 0) == -1)
-                ErrExit("error while reading message from Message Queue");
-            semOp(semid, MSGQ_SEM, 1);
-
-            update_parts(&(msgq_buffer.payload), msgq_buffer.payload.index, 2, files_parts, contatori, ipc_count);
-        }
-        if(ipc_count[3] < N){
-            semOp(semid, SHM_FLAGS_SEM, -1);
-            if((index_shm = findSHM(shm_flags, true)) == -1){
-                semOp(semid, SHM_FLAGS_SEM, 1);
-                continue;
+        while(ipc_count[0] < N || ipc_count[1] < N || ipc_count[2] < N || ipc_count[3] < N){
+            if(ipc_count[0] < N){
+                if(read(fifo1_fd, &msg_buffer, sizeof(message)) != sizeof(message))
+                    ErrExit("error while reading message from FIFO1");
+                semOp(semid, FIFO1_SEM, 1);
+                
+                update_parts(&msg_buffer, msg_buffer.index, 0, files_parts, contatori, ipc_count);
             }
+            if(ipc_count[1] < N){
+                if(read(fifo2_fd, &msg_buffer, sizeof(message)) != sizeof(message))
+                    ErrExit("error while reading message from FIFO2");
+                semOp(semid, FIFO2_SEM, 1);
+                
+                update_parts(&msg_buffer, msg_buffer.index, 1, files_parts, contatori, ipc_count);
+            }
+            if(ipc_count[2] < N){
+                if (msgrcv(msg_queue_id, &msgq_buffer, sizeof(msgqueue_message) - sizeof(long), 0, 0) == -1)
+                    ErrExit("error while reading message from Message Queue");
+                semOp(semid, MSGQ_SEM, 1);
 
-            update_parts(&shm_buffer[index_shm], shm_buffer[index_shm].index, 3, files_parts, contatori, ipc_count);
+                update_parts(&(msgq_buffer.payload), msgq_buffer.payload.index, 2, files_parts, contatori, ipc_count);
+            }
+            if(ipc_count[3] < N){
+                semOp(semid, SHM_FLAGS_SEM, -1);
+                if((index_shm = findSHM(shm_flags, true)) == -1){
+                    semOp(semid, SHM_FLAGS_SEM, 1);
+                    continue;
+                }
 
-            shm_flags[index_shm] = false;
-            semOp(semid, SHM_FLAGS_SEM, 1);
-            semOp(semid, SHM_SEM, 1);
+                update_parts(&shm_buffer[index_shm], shm_buffer[index_shm].index, 3, files_parts, contatori, ipc_count);
+
+                shm_flags[index_shm] = false;
+                semOp(semid, SHM_FLAGS_SEM, 1);
+                semOp(semid, SHM_SEM, 1);
+            }
         }
+
+        printf("[DEBUG] Invio messaggio su msgqueue...\n");
+        msgqueue_message end_msg;
+        end_msg.mtype = 1;
+        strcpy(end_msg.payload.msg, "job done.");
+        if (msgsnd(msg_queue_id, &end_msg, sizeof(msgqueue_message) - sizeof(long), 0) == -1)                    // message to message queue
+            ErrExit("msgsnd failed");
+        printf("[DEBUG] Messaggio inviato su msgqueue!\n");
     }
 
-    printf("N: %d\n", N);
-    for(int r = 0; r<N; r++){
-        printf("riga %d\n", r);
-        for(int i = 0; i<4; i++){
-            printf("%d) pid: %d, filename: %s, msg: %s\n", i, files_parts[r][i]->pid, files_parts[r][i]->filename, files_parts[r][i]->msg);
-        }
-        printf("\n\n");
-    }    
+    // printf("N: %d\n", N);
+    // for(int r = 0; r<N; r++){
+    //     printf("riga %d\n", r);
+    //     for(int i = 0; i<4; i++){
+    //         printf("%d) pid: %d, filename: %s, msg: %s\n", i, files_parts[r][i]->pid, files_parts[r][i]->filename, files_parts[r][i]->msg);
+    //     }
+    //     printf("\n\n");
+    // }    
     
-    semOp(semid, (unsigned short)DATA_READY, -1);
-    printf("[DEBUG] client ha finito, concludo...\n");
+    // semOp(semid, (unsigned short)DATA_READY, -1);
 
     remove_ipcs();
     return 0;

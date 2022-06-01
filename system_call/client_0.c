@@ -81,13 +81,9 @@ void child(int index){
         strcpy(messages[i]->filename, filepath);    // salvo il path del file
         read(file_fd, messages[i]->msg, sizeof(char) * filePartsSize[i]);       // salvo la porzione di file
     }
-
-    printf("[DEBUG] Sono il figlio: %d (index = %d)\n[DEBUG] Apro il file: %s\n\tparte 1: %s\n\tparte 2: %s\n\tparte 3: %s\n\tparte 4: %s\n\n", 
-            messages[0]->pid, index, messages[0]->filename, messages[0]->msg, messages[1]->msg, messages[2]->msg, messages[3]->msg);
     
     semOp(client_semid, CHILDREN_WAIT, -1);    
     semOp(client_semid, CHILDREN_WAIT, 0);
-    printf("[DEBUG] I client sono pronti all'invio dei file!\n");
 
     semOp(server_semid, FIFO1_SEM, -1);
     if(write(fifo1_fd, messages[0], sizeof(message)) != sizeof(message))    // message to fifo1
@@ -130,19 +126,33 @@ int create_sem_set(){
     return semid;
 }
 
-void sigIntHandler(){
-    printf("[DEBUG] signale SIGINT ricevuto: aggiorno la maschera dei segnali\n");
+void sigUsr1Handler(){
+    exit(0);
+}
 
+void printSemaphoresValue (int semid) {
+    unsigned short semVal[7];
+    union semun arg;
+    arg.array = semVal;
+
+    // get the current state of the set
+    if (semctl(semid, 0 /*ignored*/, GETALL, arg) == -1)
+        ErrExit("semctl GETALL failed");
+
+    // print the semaphore's value
+    printf("semaphore set state:\n");
+    for (int i = 0; i < 7; i++)
+        printf("id: %d --> %d\n", i, semVal[i]);
+}
+
+
+void sigIntHandler(){
     // Aggiorno la maschera dei segnali (li comprende tutti)
     sigfillset(&signalSet);
     sigprocmask(SIG_SETMASK, &signalSet, NULL);
 
-    // apre la fifo
-    fifo1_fd = open(FIFO1_NAME, O_WRONLY);
-    fifo2_fd = open(FIFO2_NAME, O_WRONLY);
 
     // cambia directory di lavoro
-    printf("[DEBUG] cambio cartella di lavoro\n");
     changeDir(workingDirectory);
 
     printf("Ciao %s, ora inizio l'invio dei file contenuti in %s\n", getUsername(), workingDirectory); 
@@ -150,8 +160,6 @@ void sigIntHandler(){
     // conta file con cui lavorare e salva i relativi filename nell'array
     N = 0;
     enumerate_dir(workingDirectory, &N, files_list);
-
-    printf("\n[DEBUG] Ho contato N=%d files\n", N);
 
     // Scrive N su fifo1
     write(fifo1_fd, &N, sizeof(N));
@@ -170,8 +178,11 @@ void sigIntHandler(){
         ErrExit("semget error");
 
     // Attende conferma dal server su shared memory
+    printf("[DEBUG] Attendo conferma da server su Shared Memory...\n");
+    printSemaphoresValue(server_semid);
     semOp(server_semid, (unsigned short)WAIT_DATA, -1);
-    printf("[DEBUG] Leggo da Shared Memory: \"%s\"\n\n", shm_address[0].msg);
+    printf("Shared memory: %s\n", shm_address[0].msg);
+    printf("[DEBUG] Ho ricevuto conferma da server su Shared Memory!\n");
 
     semInitVal[0] = N;
     client_semid = create_sem_set();
@@ -194,15 +205,33 @@ void sigIntHandler(){
     pid_t child;
     while ((child = wait(NULL)) != -1);
 
-    close(fifo1_fd);
-    printf("[DEBUG] Ho finito, avviso il server.\n");
-    semOp(server_semid, (unsigned short)DATA_READY, 1);
+    printf("[DEBUG] I Client_i hanno terminato\n");
+
+    msgqueue_message end_msg;
+    if (msgrcv(msg_queue_id, &end_msg, sizeof(msgqueue_message) - sizeof(long), 0, 0) == -1)
+        ErrExit("error while reading message from Message Queue");
+    
+    printf("[DEBUG] msgqueue: %s\n", end_msg.payload.msg);
+    
+    // if(strcmp(end_msg.payload.msg, "job done.") == 0){
+    //     sigdelset(&signalSet, SIGINT);
+    //     sigdelset(&signalSet, SIGUSR1);
+
+    //     // assegnazione del set alla maschera
+    //     sigprocmask(SIG_SETMASK, &signalSet, NULL);
+
+    //     // assegnazione degli handler ai rispettivi segnali
+    //     if (signal(SIGINT, sigIntHandler) == SIG_ERR)
+    //         ErrExit("sigint change signal handler failed");    
+    //     if (signal(SIGUSR1, sigUsr1Handler) == SIG_ERR)
+    //         ErrExit("sigusr1 change signal handler failed");
+    // }
+
+    // close(fifo1_fd);
+    // close(fifo2_fd);    
+    // semOp(server_semid, (unsigned short)DATA_READY, 1);
 }
 
-void sigUsr1Handler(){
-    printf("[DEBUG] signale SIGUSR1 ricevuto: chiudo baracca e burattini...\n");
-    exit(0);
-}
 
 int main(int argc, char * argv[]) {
 
@@ -212,27 +241,32 @@ int main(int argc, char * argv[]) {
         return 1;
     }
     
-    printf("[DEBUG] calcolo il path della working directory\n");
     homeDirectory = getHomeDir();
     workingDirectory = strcat(homeDirectory, argv[1]);
 
+    // apre la fifo
+    fifo1_fd = open(FIFO1_NAME, O_WRONLY);
+    fifo2_fd = open(FIFO2_NAME, O_WRONLY);
 
-    // creazione set di segnali
-    sigfillset(&signalSet);
-    sigdelset(&signalSet, SIGINT);
-    sigdelset(&signalSet, SIGUSR1);
+    while(true){
+        // creazione set di segnali
+        sigfillset(&signalSet);
+        sigdelset(&signalSet, SIGINT);
+        sigdelset(&signalSet, SIGUSR1);
 
-    // assegnazione del set alla maschera
-    sigprocmask(SIG_SETMASK, &signalSet, NULL);
+        // assegnazione del set alla maschera
+        sigprocmask(SIG_SETMASK, &signalSet, NULL);
 
-    // assegnazione degli handler ai rispettivi segnali
-    if (signal(SIGINT, sigIntHandler) == SIG_ERR)
-        ErrExit("sigint change signal handler failed");    
-    if (signal(SIGUSR1, sigUsr1Handler) == SIG_ERR)
-        ErrExit("sigusr1 change signal handler failed");
+        // assegnazione degli handler ai rispettivi segnali
+        if (signal(SIGINT, sigIntHandler) == SIG_ERR)
+            ErrExit("sigint change signal handler failed");    
+        if (signal(SIGUSR1, sigUsr1Handler) == SIG_ERR)
+            ErrExit("sigusr1 change signal handler failed");
 
-    // aspetta un segnale
-    pause();
+        // aspetta un segnale
+        pause();
+    }
+        
 
     return 0;
 }

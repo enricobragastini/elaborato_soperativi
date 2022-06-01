@@ -26,4 +26,3 @@ union semun {
 };
 
 void semOp (int semid, unsigned short sem_num, short sem_op);
-void printSemaphoresValue (int semid);
