@@ -8,7 +8,7 @@
 #include "shared_memory.h"
 #include "msg_queue.h"
 
-#include <bits/types/sigset_t.h>
+#include <linux/limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,96 +18,27 @@
 #define CHILDREN_WAIT 0
 
 sigset_t signalSet;
-char *homeDirectory;
-char *workingDirectory;
+char runDirectory[PATH_MAX];
+char *homeDirectory, *workingDirectory;
+
 int N;
-int server_semid;
-int fifo1_fd, fifo2_fd;
-int msg_queue_id;
-int shmid, shm_flags_id;
-bool *shm_flags_address;
-message *shm_address;
+
 char *files_list[100];
 
-int client_semid;
+char fifo1_path[PATH_MAX], fifo2_path[PATH_MAX];
+int fifo1_fd, fifo2_fd;
+
+int msg_queue_id;
+
+int shmid, shm_flags_id;
+message *shm_address;
+bool *shm_flags_address;
+
+int server_semid, client_semid;
 unsigned short semInitVal[] = {0};
 
-void shm_write(message *msg){
-    // richiede accesso ad array flags
-    semOp(server_semid, SHM_FLAGS_SEM, -1);
-
-    int index;      // posizione in cui si puó scrivere
-    if((index = findSHM(shm_flags_address, 0)) == -1)
-        ErrExit("findSHM failed");
-    
-    // copia del messaggio in shared memory
-    memcpy(&shm_address[index], msg, sizeof(message));
-
-    // segnalo che la posizione é occupata
-    shm_flags_address[index] = 1;
-
-    // restituisce accesso ad array flags
-    semOp(server_semid, SHM_FLAGS_SEM, 1);
-}
-
-void child(int index){
-    char * filepath = files_list[index];            // file da leggere
-
-    int charCount = getFileSize(filepath) - 1;      // dimensione totale del file
-    if (charCount == 0)
-        exit(0);
-
-    int filePartsSize[4];      // dimensione delle quattro parti del file
-
-    // TODO: cosa succede se charCount < 4 ?
-
-    // calcolo le dimensioni delle rispettive quattro porzioni di file
-    int baseSize = (charCount % 4 == 0) ? (charCount / 4) : (charCount / 4 + 1);
-    filePartsSize[0] = filePartsSize[1] = filePartsSize[2] = baseSize;    
-    filePartsSize[3] = charCount - baseSize * 3;
-
-    // apro il file
-    int file_fd = open(filepath, O_RDONLY);
-    if (file_fd == -1)
-	    ErrExit("error while opening file");
-
-    // divido il file nelle quattro parti
-    message * messages[4];
-    for(int i = 0; i < 4; i++){
-        messages[i] = (message *) malloc(sizeof(message));      // alloco lo spazio necessario
-
-        messages[i]->index = index;
-        messages[i]->pid = getpid();                // salvo il pid
-        strcpy(messages[i]->filename, filepath);    // salvo il path del file
-        read(file_fd, messages[i]->msg, sizeof(char) * filePartsSize[i]);       // salvo la porzione di file
-    }
-    
-    semOp(client_semid, CHILDREN_WAIT, -1);    
-    semOp(client_semid, CHILDREN_WAIT, 0);
-
-    semOp(server_semid, FIFO1_SEM, -1);
-    if(write(fifo1_fd, messages[0], sizeof(message)) != sizeof(message))    // message to fifo1
-        ErrExit("fifo1 write() failed");
-
-    semOp(server_semid, FIFO2_SEM, -1);
-    if(write(fifo2_fd, messages[1], sizeof(message)) != sizeof(message))    // message to fifo2
-        ErrExit("fifo2 write() failed");
-
-    msgqueue_message msgq_msg;
-    msgq_msg.mtype = 1;
-    msgq_msg.payload = *(messages[2]);
-
-    semOp(server_semid, MSGQ_SEM, -1);
-    if (msgsnd(msg_queue_id, &msgq_msg, sizeof(msgqueue_message) - sizeof(long), 0) == -1)                    // message to message queue
-        ErrExit("msgsnd failed");
-    
-    semOp(server_semid, SHM_SEM, -1);
-    shm_write(messages[3]);
-
-    for(int i = 0; i < 4; i++)
-        free(messages[i]);
-    close(file_fd);
-    exit(0);
+void dbprint(char *str){
+    printf("[DEBUG] %s\n", str);
 }
 
 int create_sem_set(){
@@ -126,67 +57,198 @@ int create_sem_set(){
     return semid;
 }
 
-void sigUsr1Handler(){
+void shm_write(message *msg){
+    // richiede accesso ad array flags
+    semOp(server_semid, SHM_FLAGS_SEM, -1, 0);
+
+    int index;      // posizione in cui si puó scrivere
+    if((index = findSHM(shm_flags_address, 0)) == -1)
+        ErrExit("findSHM failed");
+    
+    // copia del messaggio in shared memory
+    memcpy(&shm_address[index], msg, sizeof(message));
+
+    // segnalo che la posizione é occupata
+    shm_flags_address[index] = 1;
+
+    // restituisce accesso ad array flags
+    semOp(server_semid, SHM_FLAGS_SEM, 1, 0);
+}
+
+void ipcs_write(message * messages[4]){
+    msgqueue_message msgq_msg;
+    msgq_msg.mtype = 1;
+    msgq_msg.payload = *(messages[2]);
+
+    bool ipc_completed[] = {false, false, false, false};
+
+
+    while(!ipc_completed[0] || !ipc_completed[1] || !ipc_completed[2] || !ipc_completed[3]){
+        if(!ipc_completed[0]){
+            errno = 0;
+            semOp(server_semid, FIFO1_SEM, -1, IPC_NOWAIT);
+            if(errno != EAGAIN){
+                errno = 0;
+                if(write(fifo1_fd, messages[0], sizeof(message)) == -1){    // message to fifo1
+                    if(errno != EAGAIN)
+                        ErrExit("fifo1 write failed");
+                }
+                else
+                    ipc_completed[0] = true;
+            }
+        }
+
+        if(!ipc_completed[1]){
+            errno = 0;
+            semOp(server_semid, FIFO2_SEM, -1, IPC_NOWAIT);
+            if(errno != EAGAIN){
+                errno = 0;
+                if(write(fifo2_fd, messages[1], sizeof(message)) == -1){    // message to fifo2
+                    if(errno != EAGAIN)
+                        ErrExit("fifo2 write failed");
+                }
+                else
+                    ipc_completed[1] = true;
+            }
+        }
+
+        if(!ipc_completed[2]){
+            errno = 0;
+            semOp(server_semid, MSGQ_SEM, -1, IPC_NOWAIT);
+            if(errno != EAGAIN){
+                errno = 0;
+                if (msgsnd(msg_queue_id, &msgq_msg, sizeof(msgqueue_message) - sizeof(long), IPC_NOWAIT) == -1){    // message to message queue
+                    if(errno != EAGAIN)
+                        ErrExit("msgsnd failed");
+                    else
+                        printf("[DEBUG] MESSAGE QUEUE FULL %s\n", msgq_msg.payload.filename); 
+                }
+                else {
+                    printf("[DEBUG] MESSAGE QUEUE WRITE %s\n", msgq_msg.payload.filename); 
+                    ipc_completed[2] = true;
+                }
+            }
+        }
+
+        if(!ipc_completed[3]){
+            errno = 0;
+            semOp(server_semid, SHM_SEM, -1, IPC_NOWAIT);
+            if(errno != EAGAIN){
+                shm_write(messages[3]);
+                ipc_completed[3] = true;
+            }
+        }
+
+        printf("%d) %s --> %d, %d, %d, %d\n", messages[0]->index, messages[0]->filename, ipc_completed[0], ipc_completed[1], ipc_completed[2], ipc_completed[3]);
+    }
+
+}
+
+void child(int index){
+    char * filepath = files_list[index];            // path file da leggere
+    
+    int charCount = getFileSize(filepath) - 1;      // dimensione totale del file
+    if (charCount < 4)
+        exit(0);
+
+    int filePartsSize[4];                           // dimensione delle quattro parti del file
+
+    // calcolo le dimensioni delle rispettive quattro porzioni di file
+    int baseSize = (charCount % 4 == 0) ? (charCount / 4) : (charCount / 4 + 1);
+    filePartsSize[0] = filePartsSize[1] = filePartsSize[2] = baseSize;    
+    filePartsSize[3] = charCount - baseSize * 3;
+
+    // apro il file
+    int file_fd = open(filepath, O_RDONLY);
+    if (file_fd == -1)
+	    ErrExit("error while opening file");
+
+    // divido il file in 4 messaggi
+    message * messages[4];
+    for(int i = 0; i < 4; i++){
+        messages[i] = (message *) malloc(sizeof(message));      // alloco lo spazio necessario
+        messages[i]->index = index;
+        messages[i]->pid = getpid();                // salvo il pid
+        strcpy(messages[i]->filename, filepath);    // salvo il path del file
+        read(file_fd, messages[i]->msg, sizeof(char) * filePartsSize[i]);       // salvo la porzione di file
+    }
+    close(file_fd);
+
+    for(int i = 0; i < 4; i++){
+        printf("--> %s\n\t%s\n", messages[i]->filename, messages[i]->msg);
+    }
+
+    semOp(client_semid, CHILDREN_WAIT, -1, 0);
+    semOp(client_semid, CHILDREN_WAIT, 0, 0);      // aspetta tutti gli altri client
+
+    dbprint("I client sono tutti pronti!");
+
+    printf("Inizio a scrivere %s\n", messages[0]->filename);
+    ipcs_write(messages);
+    printf("Finito di scrivere %s\n", messages[0]->filename);
+
+    for(int i = 0; i<4; i++)
+        free(messages[i]);
     exit(0);
 }
 
-void printSemaphoresValue (int semid) {
-    unsigned short semVal[7];
-    union semun arg;
-    arg.array = semVal;
-
-    // get the current state of the set
-    if (semctl(semid, 0 /*ignored*/, GETALL, arg) == -1)
-        ErrExit("semctl GETALL failed");
-
-    // print the semaphore's value
-    printf("semaphore set state:\n");
-    for (int i = 0; i < 7; i++)
-        printf("id: %d --> %d\n", i, semVal[i]);
-}
-
-
 void sigIntHandler(){
-    // Aggiorno la maschera dei segnali (li comprende tutti)
+    // modifico la maschera dei segnali
     sigfillset(&signalSet);
     sigprocmask(SIG_SETMASK, &signalSet, NULL);
 
-
-    // cambia directory di lavoro
+    // cambio directory di lavoro
     changeDir(workingDirectory);
 
     printf("Ciao %s, ora inizio l'invio dei file contenuti in %s\n", getUsername(), workingDirectory); 
 
-    // conta file con cui lavorare e salva i relativi filename nell'array
-    N = 0;
+    // recupero N e la lista dei file da processare
     enumerate_dir(workingDirectory, &N, files_list);
 
-    // Scrive N su fifo1
-    write(fifo1_fd, &N, sizeof(N));
+    // set semafori del server
+    server_semid = semget(SEMAPHORE_KEY, 6, S_IRUSR | S_IWUSR);
+
+    dbprint("apro fifo1");
+    if((fifo1_fd = open(fifo1_path, O_WRONLY)) == -1)       // apro fifo1 BLOCCANTE
+        ErrExit("open fifo1 failed");
+    if(write(fifo1_fd, &N, sizeof(int)) != sizeof(int))     // scrivo N su fifo1
+        ErrExit("write fifo1 failed");                  
+    close(fifo1_fd);                                        // chiudo fifo1
+    dbprint("ho scritto N su fifo1");
+
+    // Attende l'apertura dal server delle fifo in lettura (evita errore "ENXIO" / "No such device or address")
+    semOp(server_semid, FIFO_READY, -1, 0);                 
+
+    // fifo NON BLOCCANTI
+    if((fifo1_fd = open(fifo1_path, O_WRONLY | O_NONBLOCK)) == -1)
+        ErrExit("open fifo1 (nonblock) failed");
+    if((fifo2_fd = open(fifo2_path, O_WRONLY | O_NONBLOCK)) == -1)
+        ErrExit("open fifo2 (nonblock) failed");
+    
+    // message queue
+    msg_queue_id = msgget(MSG_QUEUE_KEY, S_IRUSR | S_IWUSR);
 
     // shared memory
     shmid = alloc_shared_memory(SHM_KEY, SHM_SIZE);
     shm_address = (message *) get_shared_memory(shmid, 0);
 
+    // vettore di supporto alla shared memory
     shm_flags_id = alloc_shared_memory(SHM_FLAGS_KEY, SHM_FLAGS_SIZE);
     shm_flags_address = (bool *) get_shared_memory(shm_flags_id, 0);
 
-    msg_queue_id = msgget(MSG_QUEUE_KEY, S_IRUSR | S_IWUSR);
-
-    server_semid = semget(SEMAPHORE_KEY, 6, S_IRUSR | S_IWUSR);
     if(server_semid == -1)
         ErrExit("semget error");
-
-    // Attende conferma dal server su shared memory
-    printf("[DEBUG] Attendo conferma da server su Shared Memory...\n");
-    printSemaphoresValue(server_semid);
-    semOp(server_semid, (unsigned short)WAIT_DATA, -1);
-    printf("Shared memory: %s\n", shm_address[0].msg);
-    printf("[DEBUG] Ho ricevuto conferma da server su Shared Memory!\n");
 
     semInitVal[0] = N;
     client_semid = create_sem_set();
 
+    dbprint("attendo conferma su shared memory dal server");
+
+    semOp(server_semid, (unsigned short)WAIT_DATA, -1, 0);      // attende scrittura del server su Shared Memory
+    printf("Shared memory: %s\n", shm_address[0].msg);
+
+
+    // genero N processi figli
     for(int i = 0; i<N; i++){
         pid_t pid = fork();
         switch (pid) {
@@ -201,37 +263,18 @@ void sigIntHandler(){
         }
     }
 
-    // Aspetta la terminazione dei figli
+    // Attende la terminazione dei figli
     pid_t child;
     while ((child = wait(NULL)) != -1);
 
-    printf("[DEBUG] I Client_i hanno terminato\n");
 
-    msgqueue_message end_msg;
-    if (msgrcv(msg_queue_id, &end_msg, sizeof(msgqueue_message) - sizeof(long), 0, 0) == -1)
-        ErrExit("error while reading message from Message Queue");
-    
-    printf("[DEBUG] msgqueue: %s\n", end_msg.payload.msg);
-    
-    // if(strcmp(end_msg.payload.msg, "job done.") == 0){
-    //     sigdelset(&signalSet, SIGINT);
-    //     sigdelset(&signalSet, SIGUSR1);
-
-    //     // assegnazione del set alla maschera
-    //     sigprocmask(SIG_SETMASK, &signalSet, NULL);
-
-    //     // assegnazione degli handler ai rispettivi segnali
-    //     if (signal(SIGINT, sigIntHandler) == SIG_ERR)
-    //         ErrExit("sigint change signal handler failed");    
-    //     if (signal(SIGUSR1, sigUsr1Handler) == SIG_ERR)
-    //         ErrExit("sigusr1 change signal handler failed");
-    // }
-
-    // close(fifo1_fd);
-    // close(fifo2_fd);    
-    // semOp(server_semid, (unsigned short)DATA_READY, 1);
+    close(fifo1_fd);
+    close(fifo2_fd);
 }
 
+void sigUsr1Handler(){
+    exit(0);
+}
 
 int main(int argc, char * argv[]) {
 
@@ -241,32 +284,38 @@ int main(int argc, char * argv[]) {
         return 1;
     }
     
+    // recupero la directory in cui si trova l'eseguibile
+    if (getcwd(runDirectory, PATH_MAX) == NULL)
+        ErrExit("getcwd failed");
+
+    // calcolo il full path delle due fifo (per potervi accedere anche dopo il cambio directory) 
+    if(snprintf(fifo1_path, PATH_MAX, "%s/%s", runDirectory, FIFO1_NAME) < 0)
+        ErrExit("snprintf error");
+    if(snprintf(fifo2_path, PATH_MAX, "%s/%s", runDirectory, FIFO2_NAME) < 0)
+        ErrExit("snprintf error");
+
+    printf("%s\n", fifo1_path);
+
+    // recupero la home directory
     homeDirectory = getHomeDir();
+
+    // calcolo la directory di lavoro
     workingDirectory = strcat(homeDirectory, argv[1]);
 
-    // apre la fifo
-    fifo1_fd = open(FIFO1_NAME, O_WRONLY);
-    fifo2_fd = open(FIFO2_NAME, O_WRONLY);
+    // while(true){
+    sigfillset(&signalSet);
+    sigdelset(&signalSet, SIGINT);
+    sigdelset(&signalSet, SIGUSR1);
 
-    while(true){
-        // creazione set di segnali
-        sigfillset(&signalSet);
-        sigdelset(&signalSet, SIGINT);
-        sigdelset(&signalSet, SIGUSR1);
+    // assegnazione del set alla maschera
+    sigprocmask(SIG_SETMASK, &signalSet, NULL);
 
-        // assegnazione del set alla maschera
-        sigprocmask(SIG_SETMASK, &signalSet, NULL);
+    // assegnazione degli handler ai rispettivi segnali
+    if (signal(SIGINT, sigIntHandler) == SIG_ERR)
+        ErrExit("sigint change signal handler failed");    
+    if (signal(SIGUSR1, sigUsr1Handler) == SIG_ERR)
+        ErrExit("sigusr1 change signal handler failed");
 
-        // assegnazione degli handler ai rispettivi segnali
-        if (signal(SIGINT, sigIntHandler) == SIG_ERR)
-            ErrExit("sigint change signal handler failed");    
-        if (signal(SIGUSR1, sigUsr1Handler) == SIG_ERR)
-            ErrExit("sigusr1 change signal handler failed");
-
-        // aspetta un segnale
-        pause();
-    }
-        
-
-    return 0;
+    pause();
+    // }
 }

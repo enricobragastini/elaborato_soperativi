@@ -39,6 +39,10 @@ bool beginswith(char *str, char *prefix){
     return strncmp(prefix, str, strlen(prefix)) == 0;
 }
 
+bool contains(char *str, char *substr){
+    return strstr(str, substr) != NULL;
+}
+
 int getFileSize(char * pathname){
     struct stat stat_buffer;
     if(stat(pathname, &stat_buffer) == -1)
@@ -69,7 +73,7 @@ void enumerate_dir(char * directory, int * count, char *files_list[]){
             }
         }
         // se trovo un file (che ha un corretto filename)
-        if(dentry->d_type == DT_REG && beginswith(dentry->d_name, "sendme_")){
+        if(dentry->d_type == DT_REG && beginswith(dentry->d_name, "sendme_") && !contains(dentry->d_name, "_out")){
             char filepath[strlen(directory) + strlen(dentry->d_name) + 1]; 
             sprintf(filepath, "%s/%s", directory, dentry->d_name);
 

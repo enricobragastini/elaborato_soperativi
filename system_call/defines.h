@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/wait.h>
+#include <errno.h>
 
 #include <string.h>
 

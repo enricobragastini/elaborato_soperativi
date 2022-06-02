@@ -11,7 +11,7 @@
 
 // server semaphores
 #define WAIT_DATA           0
-#define DATA_READY          1
+#define FIFO_READY          1
 #define FIFO1_SEM           2
 #define FIFO2_SEM           3 
 #define MSGQ_SEM            4
@@ -25,4 +25,4 @@ union semun {
     struct seminfo  *__buf;  /* Buffer for IPC_INFO*/
 };
 
-void semOp (int semid, unsigned short sem_num, short sem_op);
+void semOp (int semid, unsigned short sem_num, short sem_op, int sem_flg);
