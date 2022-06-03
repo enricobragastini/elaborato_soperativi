@@ -32,10 +32,6 @@ unsigned short semInitVal[] = {0, 0, 50, 50, 50, 50, 1};
 
 static const char * ipcs_names[4] = {"FIFO1", "FIFO2", "msgQueue", "ShdMem"};
 
-void dbprint(char *str){
-    printf("[DEBUG] %s\n", str);
-}
-
 int create_sem_set(){
     int totSemaphores = sizeof(semInitVal)/sizeof(unsigned short);      // lunghezza array semafori
     
@@ -69,14 +65,12 @@ void print_contatori(int * contatori){
 
 void write_on_file(int row, message * files_parts[N][4]){
     char * path_in = files_parts[row][0]->filename;     // nome file input
-    
-    printf("(Row %d) Scrivo il file %s\n", row, path_in);
 
     char path_out[PATH_MAX];                            // nome file output (con '_out')
     strcpy(path_out, path_in);
     strcat(path_out, "_out");
 
-    printf("(Row %d) Scrivo il file %s\n", row, path_out);
+    printf("<server> Scrivo il file %s\n", path_out);
 
     int fd = open(path_out, O_WRONLY | O_CREAT, 0644);
     if(fd == -1)
@@ -84,27 +78,20 @@ void write_on_file(int row, message * files_parts[N][4]){
 
     char * out_str;
     for(int i = 0; i<4; i++){
-        printf("\n--> %d\n", i);
-        //printf("[DEBUG] Calcolo la dimensione della stringa (%s)\n", files_parts[row][i]->filename);
         int size = snprintf(NULL, 0, "[Parte %d, del file %s, spedita dal processo %d tramite %s]", 
                 i, files_parts[row][i]->filename, files_parts[row][i]->pid, ipcs_names[i]);
 
-        //printf("[DEBUG] Alloco %d char\n", size);
         out_str = (char *) malloc(size * sizeof(char));
 
-        //printf("[DEBUG] Scrivo la stringa sul buffer %p\n", out_str);
         snprintf(out_str, size, "[Parte %d, del file %s, spedita dal processo %d tramite %s]", 
                 i, files_parts[row][i]->filename, files_parts[row][i]->pid, ipcs_names[i]);
 
-        //printf("[DEBUG] Ho scritto la stringa sul buffer: %s\n", out_str);
 
         write(fd, out_str, strlen(out_str));
         write(fd, "\n", strlen("\n"));
 
         write(fd, &files_parts[row][i]->msg, strlen(files_parts[row][i]->msg));
         write(fd, "\n", strlen("\n"));
-
-        //printf("[DEBUG] Ho scritto la parte %d del file\n", i);
 
         if(i != 3)
             write(fd, "\n", strlen("\n"));
@@ -124,6 +111,10 @@ void update_parts(message * msg, int row, int ipc_index, message * files_parts[N
     memcpy(files_parts[row][ipc_index], msg, sizeof(message));
 
     contatori[row]++;
+
+    // if(contatori[row] == 4){
+    //     write_on_file(row, files_parts);
+    // }
 
     // if(contatori[row] == 4){
     //     printf("+++ MESSAGGIO %d +++\n", row);
@@ -148,8 +139,6 @@ void ipcs_read(){
     int contatori[N];               // conta quanti msg sono arrivati per ogni file: per poter scrivere su file quando ci sono tutti e 4
     memset(contatori, 0, sizeof(int) * N);
 
-    // print_contatori(contatori);
-
     int received = 0;
 
     size_t s_read;
@@ -157,11 +146,10 @@ void ipcs_read(){
     msgqueue_message msgq_buffer;
     int index_shm;
 
-    dbprint("Inizio a ricevere messaggi dalle IPC");
+    printf("<server> Inizio a ricevere i messaggi sulle IPC\n");
 
     while(received < (N*4)){
         
-        dbprint("Reading from FIFO1");
         errno = 0;
         s_read = read(fifo1_fd, &fifo1_buffer, sizeof(message));
         if(s_read == -1){
@@ -170,12 +158,11 @@ void ipcs_read(){
         }
         else if(s_read == sizeof(message)){
             semOp(semid, FIFO1_SEM, 1, 0);
-            printf("Received message from %d on FIFO1\n", fifo1_buffer.pid);
+            printf("<server> Received message from %d on FIFO1\n", fifo1_buffer.pid);
             update_parts(&fifo1_buffer, fifo1_buffer.index, 0, files_parts, contatori);
             received++;
         }         
 
-        dbprint("Reading from FIFO2");
         errno = 0;
         s_read = read(fifo2_fd, &fifo2_buffer, sizeof(message));
         if(s_read == -1){
@@ -184,55 +171,57 @@ void ipcs_read(){
         }
         else if(s_read == sizeof(message)){
             semOp(semid, FIFO2_SEM, 1, 0);
-            printf("Received message from %d on FIFO2\n", fifo2_buffer.pid);
+            printf("<server> Received message from %d on FIFO2\n", fifo2_buffer.pid);
             update_parts(&fifo2_buffer, fifo2_buffer.index, 1, files_parts, contatori);
             received++;
         }
 
-        dbprint("Reading from MSGQ");
         errno = 0;
         if(msgrcv(msg_queue_id, &msgq_buffer, sizeof(msgqueue_message) - sizeof(long), 0, IPC_NOWAIT) == -1){
             if(errno == ENOMSG)
-                printf("Message Queue ENOMSG\n");
+                printf("<server> La Message Queue al momento é vuota (ENOMSG)\n");
             else if(errno != EAGAIN)
                 ErrExit("msgq read failed");
         }
         else{
             semOp(semid, MSGQ_SEM, 1, 0);
-            printf("Received message from %d on MSGQ\n", msgq_buffer.payload.pid);
+            printf("<server> Received message from %d on MSGQ\n", msgq_buffer.payload.pid);
             update_parts(&msgq_buffer.payload, msgq_buffer.payload.index, 2, files_parts, contatori);
             received++;
         }
 
-        dbprint("Reading from SHM");
         if(semOp(semid, SHM_MUTEX_SEM, -1, IPC_NOWAIT) == -1){
             if(errno != EAGAIN)
                 ErrExit("Shared Memory failed");
         }
         else{
             if((index_shm = findSHM(shm_flags, true)) != -1){
-                printf("Received message from %d on SHM\n", shm_buffer[index_shm].pid);
+                printf("<server> Received message from %d on SHM\n", shm_buffer[index_shm].pid);
                 update_parts(&shm_buffer[index_shm], shm_buffer[index_shm].index, 3, files_parts, contatori);
                 semOp(semid, SHM_SEM, 1, 0);
                 shm_flags[index_shm] = false;
                 received++;
             }
             else
-               printf("Nothing to read from SHM\n");
+               printf("<server> La Shared Memory al momento é vuota\n");
 
             semOp(semid, SHM_MUTEX_SEM, 1, 0);
         }
-        
+
         printf("[%d / %d]\n", received, (N*4));
     }
 
-    for(int row = 0; row<N; row++){
-        printf("+++ MESSAGGIO %d +++\n", row);
-        for(int i = 0; i<4; i++){
-            printf("\t%d) %.*s\n", i, 2, files_parts[row][i]->msg);
-        }
-        printf("\n");
+    for(int i = 0; i<N; i++){
+        write_on_file(i, files_parts);
     }
+
+    // for(int row = 0; row<N; row++){
+    //     printf("+++ MESSAGGIO %d +++\n", row);
+    //     for(int i = 0; i<4; i++){
+    //         printf("\t%d) %.*s\n", i, 2, files_parts[row][i]->msg);
+    //     }
+    //     printf("\n");
+    // }
 
     // pid_t child;
     // while ((child = wait(NULL)) != -1);
@@ -248,19 +237,19 @@ int main(int argc, char * argv[]) {
     if (signal(SIGINT, remove_ipcs) == SIG_ERR)
         ErrExit("sigint change signal handler failed");
 
-
     unlink(FIFO1_NAME);
     unlink(FIFO2_NAME);
 
     if (mkfifo(FIFO1_NAME, S_IRUSR | S_IWUSR) == -1)    // creo fifo1
         ErrExit("Creating FIFO1 failed");
-
     if (mkfifo(FIFO2_NAME, S_IRUSR | S_IWUSR) == -1)    // creo fifo2
         ErrExit("Creating FIFO2 failed");
+    printf("<server> Ho creato FIFO1 e FIFO2\n");
 
     // message queue
     if((msg_queue_id = msgget(MSG_QUEUE_KEY, IPC_CREAT | S_IRUSR | S_IWUSR | IPC_NOWAIT)) == -1)
         ErrExit("msgget failed");
+    printf("<server> Ho creato la Message Queue\n");
 
     // shared memory
     shmid = alloc_shared_memory(SHM_KEY, SHM_SIZE);
@@ -269,44 +258,43 @@ int main(int argc, char * argv[]) {
     // vettore di supporto alla shared memory
     shm_flags_id = alloc_shared_memory(SHM_FLAGS_KEY, SHM_FLAGS_SIZE);
     shm_flags = (bool *) get_shared_memory(shm_flags_id, 0);
+    printf("<server> Ho inizializzato la Shared Memory e il suo vettore di supporto\n");
 
     // set semafori
     semid = create_sem_set();
-
-    dbprint("ipc create");
+    printf("<server> Ho creato il set di semafori del server\n");
 
 
     // while(true){
-        dbprint("apro fifo1");
         if((fifo1_fd = open(FIFO1_NAME, O_RDONLY)) == -1)       // apro fifo1 BLOCCANTE
             ErrExit("open fifo1 failed");
         if(read(fifo1_fd, &N, sizeof(int)) != sizeof(int))     // leggo N da fifo1
             ErrExit("read fifo1 failed");                  
         close(fifo1_fd);                                        // chiudo fifo1
+        printf("<server> Ho ricevuto N = %d dal client su FIFO1\n", N);
 
-        printf("N = %d\n", N);
-        dbprint("N ricevuto!");
 
         if((fifo1_fd = open(FIFO1_NAME, O_RDONLY | O_NONBLOCK)) == -1)       // apro fifo1 BLOCCANTE
             ErrExit("open fifo1 failed");
         if((fifo1_fd_extra = open(FIFO1_NAME, O_WRONLY | O_NONBLOCK)) == -1)
             ErrExit("open fifo1_extra (nonblock) failed");
+        printf("<server> Ho aperto FIFO1 e FIFO1_EXTRA non bloccanti\n");
 
         if((fifo2_fd = open(FIFO2_NAME, O_RDONLY | O_NONBLOCK)) == -1)
             ErrExit("open fifo2 (nonblock) failed");
         if((fifo2_fd_extra = open(FIFO2_NAME, O_WRONLY | O_NONBLOCK)) == -1)
             ErrExit("open fifo2_extra (nonblock) failed");
+        printf("<server> Ho aperto FIFO2 e FIFO2_EXTRA non bloccanti\n");
 
         for(int i = 0; i<50; i++)       // inizializzo il vettore di supporto
             shm_flags[i] = false;
 
         sprintf(shm_buffer[0].msg, "N is equal to %d", N);
-        dbprint("Ho scritto su Shared Memory!");
-        semOp(semid, (unsigned short)WAIT_DATA, 1, 0);      // Scrittura su Shared Memory: sblocca il client
+        semOp(semid, WAIT_DATA, 1, 0);      // Scrittura su Shared Memory: sblocca il client
+        printf("<server> Ho scritto il messaggio su Shared Memory\n");        
 
         ipcs_read();
 
-        dbprint("Ho finito di leggere...");
     // }
 
     remove_ipcs();
