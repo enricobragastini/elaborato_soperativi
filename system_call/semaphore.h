@@ -16,7 +16,7 @@
 #define FIFO2_SEM           3 
 #define MSGQ_SEM            4
 #define SHM_SEM             5
-#define SHM_FLAGS_SEM       6
+#define SHM_MUTEX_SEM       6
 
 union semun {
     int              val;    /* Value for SETVAL */
@@ -25,4 +25,4 @@ union semun {
     struct seminfo  *__buf;  /* Buffer for IPC_INFO*/
 };
 
-void semOp (int semid, unsigned short sem_num, short sem_op, int sem_flg);
+int semOp (int semid, unsigned short sem_num, short sem_op, int sem_flg);

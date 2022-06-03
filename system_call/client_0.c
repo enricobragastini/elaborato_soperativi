@@ -37,9 +37,7 @@ bool *shm_flags_address;
 int server_semid, client_semid;
 unsigned short semInitVal[] = {0};
 
-void dbprint(char *str){
-    printf("[DEBUG] %s\n", str);
-}
+message * messages[4];
 
 int create_sem_set(){
     int totSemaphores = sizeof(semInitVal)/sizeof(unsigned short);      // lunghezza array semafori
@@ -59,7 +57,7 @@ int create_sem_set(){
 
 void shm_write(message *msg){
     // richiede accesso ad array flags
-    semOp(server_semid, SHM_FLAGS_SEM, -1, 0);
+    semOp(server_semid, SHM_MUTEX_SEM, -1, 0);
 
     int index;      // posizione in cui si puó scrivere
     if((index = findSHM(shm_flags_address, 0)) == -1)
@@ -72,127 +70,139 @@ void shm_write(message *msg){
     shm_flags_address[index] = 1;
 
     // restituisce accesso ad array flags
-    semOp(server_semid, SHM_FLAGS_SEM, 1, 0);
+    semOp(server_semid, SHM_MUTEX_SEM, 1, 0);
 }
 
-void ipcs_write(message * messages[4]){
+void ipcs_write(){
     msgqueue_message msgq_msg;
     msgq_msg.mtype = 1;
     msgq_msg.payload = *(messages[2]);
 
-    bool ipc_completed[] = {false, false, false, false};
-
-
-    while(!ipc_completed[0] || !ipc_completed[1] || !ipc_completed[2] || !ipc_completed[3]){
-        if(!ipc_completed[0]){
-            errno = 0;
-            semOp(server_semid, FIFO1_SEM, -1, IPC_NOWAIT);
-            if(errno != EAGAIN){
-                errno = 0;
-                if(write(fifo1_fd, messages[0], sizeof(message)) == -1){    // message to fifo1
-                    if(errno != EAGAIN)
-                        ErrExit("fifo1 write failed");
-                }
-                else
-                    ipc_completed[0] = true;
-            }
-        }
-
-        if(!ipc_completed[1]){
-            errno = 0;
-            semOp(server_semid, FIFO2_SEM, -1, IPC_NOWAIT);
-            if(errno != EAGAIN){
-                errno = 0;
-                if(write(fifo2_fd, messages[1], sizeof(message)) == -1){    // message to fifo2
-                    if(errno != EAGAIN)
-                        ErrExit("fifo2 write failed");
-                }
-                else
-                    ipc_completed[1] = true;
-            }
-        }
-
-        if(!ipc_completed[2]){
-            errno = 0;
-            semOp(server_semid, MSGQ_SEM, -1, IPC_NOWAIT);
-            if(errno != EAGAIN){
-                errno = 0;
-                if (msgsnd(msg_queue_id, &msgq_msg, sizeof(msgqueue_message) - sizeof(long), IPC_NOWAIT) == -1){    // message to message queue
-                    if(errno != EAGAIN)
-                        ErrExit("msgsnd failed");
-                    else
-                        printf("[DEBUG] MESSAGE QUEUE FULL %s\n", msgq_msg.payload.filename); 
-                }
-                else {
-                    printf("[DEBUG] MESSAGE QUEUE WRITE %s\n", msgq_msg.payload.filename); 
-                    ipc_completed[2] = true;
-                }
-            }
-        }
-
-        if(!ipc_completed[3]){
-            errno = 0;
-            semOp(server_semid, SHM_SEM, -1, IPC_NOWAIT);
-            if(errno != EAGAIN){
-                shm_write(messages[3]);
-                ipc_completed[3] = true;
-            }
-        }
-
-        printf("%d) %s --> %d, %d, %d, %d\n", messages[0]->index, messages[0]->filename, ipc_completed[0], ipc_completed[1], ipc_completed[2], ipc_completed[3]);
+    bool valid = true;
+    for(int i = 0; i<4; i++){
+        if(strlen(messages[i]->msg) <= 0)
+            valid = false;
     }
+    if(!valid)
+        ErrExit("Message length < 0!");
 
+    bool fifo1, fifo2, msgq, shm;
+    fifo1 = fifo2 = msgq = shm = false;
+
+    while(!fifo1 || !fifo2 || !msgq || !shm){
+
+        if(!fifo1){
+            errno = 0;
+            if(semOp(server_semid, FIFO1_SEM, -1, IPC_NOWAIT) == -1){
+                if(errno != EAGAIN)
+                    ErrExit("semop fifo1 failed");
+            }
+            else{
+                if(write(fifo1_fd, messages[0], sizeof(message)) == sizeof(message)){    // message to fifo1
+                    fifo1 = true;
+                    printf("<client_%d> Ho scritto %s su FIFO1\n", getpid(), messages[0]->filename);
+                }
+                else
+                    ErrExit("fifo1 failed");
+            }
+        }
+
+        if(!fifo2){
+            errno = 0;
+            if(semOp(server_semid, FIFO2_SEM, -1, IPC_NOWAIT) == -1){
+                if(errno != EAGAIN)
+                    ErrExit("semop fifo2 failed");
+            }
+            else{
+                if(write(fifo2_fd, messages[1], sizeof(message)) == sizeof(message)){    // message to fifo2
+                    fifo2 = true;
+                    printf("<client_%d> Ho scritto %s su FIFO2\n", getpid(), messages[1]->filename);
+                }
+                else
+                    ErrExit("fifo2 failed");
+            }
+        }
+
+
+        if(!msgq){
+            errno = 0;
+            if(semOp(server_semid, MSGQ_SEM, -1, IPC_NOWAIT) == -1){
+                if(errno != EAGAIN)
+                    ErrExit("semop msgq failed");
+            }
+            else{
+                if (msgsnd(msg_queue_id, &msgq_msg, sizeof(msgqueue_message) - sizeof(long), 0) != -1){
+                    msgq = true;
+                    printf("<client_%d> Ho scritto %s su MSGQ\n", getpid(), messages[2]->filename);
+                }
+                else
+                    ErrExit("msgq failed");
+            }
+        }
+        
+        if(!shm){
+            errno = 0;
+            if(semOp(server_semid, SHM_SEM, -1, IPC_NOWAIT) == -1){
+                if(errno != EAGAIN)
+                    ErrExit("semop shm failed");
+            }
+            else{
+                shm_write(messages[3]);
+                shm = true;
+                printf("<client_%d> Ho scritto %s su SHM\n", getpid(), messages[3]->filename);
+            }
+        }
+    }
 }
 
 void child(int index){
     char * filepath = files_list[index];            // path file da leggere
     
-    int charCount = getFileSize(filepath) - 1;      // dimensione totale del file
+    
+    off_t charCount = getFileSize(filepath);        // dimensione totale del file
     if (charCount < 4)
         exit(0);
 
     int filePartsSize[4];                           // dimensione delle quattro parti del file
 
     // calcolo le dimensioni delle rispettive quattro porzioni di file
-    int baseSize = (charCount % 4 == 0) ? (charCount / 4) : (charCount / 4 + 1);
+    int baseSize = (charCount % 4 == 0) ? (charCount / 4) : ((charCount / 4) + 1);
     filePartsSize[0] = filePartsSize[1] = filePartsSize[2] = baseSize;    
-    filePartsSize[3] = charCount - baseSize * 3;
+    filePartsSize[3] = charCount - (baseSize * 3);
 
     // apro il file
     int file_fd = open(filepath, O_RDONLY);
     if (file_fd == -1)
 	    ErrExit("error while opening file");
 
+    printf("<client_%d> Apro il file %s\n\tSuddivisione caratteri: %d %d %d %d\n", getpid(), filepath, filePartsSize[0], filePartsSize[1], filePartsSize[2], filePartsSize[3]);
+
     // divido il file in 4 messaggi
-    message * messages[4];
     for(int i = 0; i < 4; i++){
         messages[i] = (message *) malloc(sizeof(message));      // alloco lo spazio necessario
         messages[i]->index = index;
         messages[i]->pid = getpid();                // salvo il pid
         strcpy(messages[i]->filename, filepath);    // salvo il path del file
-        read(file_fd, messages[i]->msg, sizeof(char) * filePartsSize[i]);       // salvo la porzione di file
+
+        if((read(file_fd, messages[i]->msg, sizeof(char) * filePartsSize[i])) != sizeof(char) * filePartsSize[i])
+            ErrExit("couldn't read file properly");
     }
     close(file_fd);
 
-    for(int i = 0; i < 4; i++){
-        printf("--> %s\n\t%s\n", messages[i]->filename, messages[i]->msg);
-    }
-
     semOp(client_semid, CHILDREN_WAIT, -1, 0);
-    semOp(client_semid, CHILDREN_WAIT, 0, 0);      // aspetta tutti gli altri client
+    semOp(client_semid, CHILDREN_WAIT,  0, 0);      // aspetta tutti gli altri client
 
-    dbprint("I client sono tutti pronti!");
-
-    printf("Inizio a scrivere %s\n", messages[0]->filename);
-    ipcs_write(messages);
-    printf("Finito di scrivere %s\n", messages[0]->filename);
+    ipcs_write();
 
     for(int i = 0; i<4; i++)
         free(messages[i]);
+
+    printf("<client_%d> Ho concluso\n", getpid());
     exit(0);
 }
 
 void sigIntHandler(){
+    printf("<client_0> SIGINT ricevuto.\n");
     // modifico la maschera dei segnali
     sigfillset(&signalSet);
     sigprocmask(SIG_SETMASK, &signalSet, NULL);
@@ -205,28 +215,31 @@ void sigIntHandler(){
     // recupero N e la lista dei file da processare
     enumerate_dir(workingDirectory, &N, files_list);
 
-    // set semafori del server
-    server_semid = semget(SEMAPHORE_KEY, 6, S_IRUSR | S_IWUSR);
+    printf("<client_0> Ho trovato N=%d file sendme_\n", N);
 
-    dbprint("apro fifo1");
+    // set semafori del server
+
     if((fifo1_fd = open(fifo1_path, O_WRONLY)) == -1)       // apro fifo1 BLOCCANTE
         ErrExit("open fifo1 failed");
+    printf("<client_0> Ho aperto FIFO1\n");
+
     if(write(fifo1_fd, &N, sizeof(int)) != sizeof(int))     // scrivo N su fifo1
-        ErrExit("write fifo1 failed");                  
-    close(fifo1_fd);                                        // chiudo fifo1
-    dbprint("ho scritto N su fifo1");
+        ErrExit("write fifo1 failed");
+    printf("<client_0> Ho inviato N su FIFO1\n");         
 
-    // Attende l'apertura dal server delle fifo in lettura (evita errore "ENXIO" / "No such device or address")
-    semOp(server_semid, FIFO_READY, -1, 0);                 
+    if((fifo2_fd = open(fifo2_path, O_WRONLY)) == -1)
+        ErrExit("open fifo2 failed");
+    printf("<client_0> Ho aperto FIFO2\n");
 
-    // fifo NON BLOCCANTI
-    if((fifo1_fd = open(fifo1_path, O_WRONLY | O_NONBLOCK)) == -1)
-        ErrExit("open fifo1 (nonblock) failed");
-    if((fifo2_fd = open(fifo2_path, O_WRONLY | O_NONBLOCK)) == -1)
-        ErrExit("open fifo2 (nonblock) failed");
+
+    server_semid = semget(SEMAPHORE_KEY, 6, S_IRUSR | S_IWUSR);
+    if(server_semid == -1)
+        ErrExit("semget error");
+    printf("<client_0> Ho ricevuto il set di semafori del server \n");
     
     // message queue
     msg_queue_id = msgget(MSG_QUEUE_KEY, S_IRUSR | S_IWUSR);
+    printf("<client_0> Ho aperto la MESSAGE QUEUE \n");
 
     // shared memory
     shmid = alloc_shared_memory(SHM_KEY, SHM_SIZE);
@@ -235,19 +248,17 @@ void sigIntHandler(){
     // vettore di supporto alla shared memory
     shm_flags_id = alloc_shared_memory(SHM_FLAGS_KEY, SHM_FLAGS_SIZE);
     shm_flags_address = (bool *) get_shared_memory(shm_flags_id, 0);
-
-    if(server_semid == -1)
-        ErrExit("semget error");
+    printf("<client_0> Ho inizializzato la SHARED MEMORY e il suo vettore di supporto \n");
 
     semInitVal[0] = N;
     client_semid = create_sem_set();
+    printf("<client_0> Ho creato il set di semafori del client\n");
 
-    dbprint("attendo conferma su shared memory dal server");
+    printf("<client_0> Attendo il messaggio di conferma dal server su SHM\n");
+    semOp(server_semid, WAIT_DATA, -1, 0);      // attende scrittura del server su Shared Memory
+    printf("<client_0> Messaggio ricevuto su SHM: %s\n", shm_address[0].msg);
 
-    semOp(server_semid, (unsigned short)WAIT_DATA, -1, 0);      // attende scrittura del server su Shared Memory
-    printf("Shared memory: %s\n", shm_address[0].msg);
-
-
+    printf("<client_0> Genero %d figli\n", N);
     // genero N processi figli
     for(int i = 0; i<N; i++){
         pid_t pid = fork();
@@ -278,6 +289,10 @@ void sigUsr1Handler(){
 
 int main(int argc, char * argv[]) {
 
+    printf("DIMENSIONE CHAR = %ld", sizeof(char));
+    printf("DIMENSIONE MESSAGE = %ld bytes\n", sizeof(message));
+    printf("DIMENSIONE PIPE_BUF = %d bytes\n", PIPE_BUF);
+
     // controllo il numero di parametri in input
     if (argc != 2) {
         printf("Usage: %s <HOME>/<directory>\n", argv[0]);
@@ -293,8 +308,6 @@ int main(int argc, char * argv[]) {
         ErrExit("snprintf error");
     if(snprintf(fifo2_path, PATH_MAX, "%s/%s", runDirectory, FIFO2_NAME) < 0)
         ErrExit("snprintf error");
-
-    printf("%s\n", fifo1_path);
 
     // recupero la home directory
     homeDirectory = getHomeDir();
@@ -316,6 +329,7 @@ int main(int argc, char * argv[]) {
     if (signal(SIGUSR1, sigUsr1Handler) == SIG_ERR)
         ErrExit("sigusr1 change signal handler failed");
 
+    printf("<client_0> Attendo SIGINT (ctrl+c) o SIGUSR1\n");
     pause();
     // }
 }

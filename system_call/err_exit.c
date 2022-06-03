@@ -10,6 +10,7 @@
 
 void ErrExit(const char *msg)
 {
+    printf("ERRNO --> %d\n", errno);
     perror(msg);
     exit(1);
 }

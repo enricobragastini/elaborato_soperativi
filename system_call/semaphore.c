@@ -9,15 +9,17 @@
 #include <errno.h>
 #include <stdio.h>
 
-void semOp(int semid, unsigned short sem_num, short sem_op, int sem_flg) {
+int semOp(int semid, unsigned short sem_num, short sem_op, int sem_flg) {
     struct sembuf sop = {
         .sem_num = sem_num, 
         .sem_op = sem_op, 
         .sem_flg = sem_flg
     };
 
-    if (semop(semid, &sop, 1) == -1){
-        printf("errno: %d\n", errno);
-        ErrExit("semop failed");
-    }
+    // if (semop(semid, &sop, 1) == -1){
+    //     printf("errno: %d\n", errno);
+    //     ErrExit("semop failed");
+    // }
+
+    return semop(semid, &sop, 1);
 }

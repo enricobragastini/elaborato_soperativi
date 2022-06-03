@@ -17,7 +17,7 @@
 
 sigset_t signalSet;
 
-int fifo1_fd, fifo2_fd;
+int fifo1_fd, fifo1_fd_extra, fifo2_fd, fifo2_fd_extra;
 
 int msg_queue_id;
 
@@ -33,7 +33,7 @@ unsigned short semInitVal[] = {0, 0, 50, 50, 50, 50, 1};
 static const char * ipcs_names[4] = {"FIFO1", "FIFO2", "msgQueue", "ShdMem"};
 
 void dbprint(char *str){
-    //printf("[DEBUG] %s\n", str);
+    printf("[DEBUG] %s\n", str);
 }
 
 int create_sem_set(){
@@ -119,36 +119,26 @@ void write_on_file(int row, message * files_parts[N][4]){
     // exit(0);
 }
 
-void update_parts(message * msg, int row, int ipc_index, message * files_parts[N][4], int * contatori, int * ipc_count){
+void update_parts(message * msg, int row, int ipc_index, message * files_parts[N][4], int * contatori){
     files_parts[row][ipc_index] = (message *) malloc(sizeof(message));
     memcpy(files_parts[row][ipc_index], msg, sizeof(message));
 
-    ipc_count[ipc_index]++;
     contatori[row]++;
 
-    print_contatori(contatori);
+    // if(contatori[row] == 4){
+    //     printf("+++ MESSAGGIO %d +++\n", row);
+    //     for(int i = 0; i<4; i++){
+    //         printf("\t%d) %s\n", i, files_parts[row][i]->msg);
+    //     }
+    //     printf("\n");
+    // }
 
-    if(contatori[row] == 4){
-        //printf("[DEBUG] Ho tutti i %d pezzi di %s\n", contatori[row], files_parts[row][ipc_index]->filename);
-        write_on_file(row, files_parts);
-
-        // pid_t pid = fork();
-        // switch (pid) {
-        //     case -1:
-        //         ErrExit("fork failed");
-        //         break;
-        //     case 0:
-        //         write_on_file(row, files_parts);
-        //         break;
-        //     default:
-        //         break;
-        // }
-    }
-
-    if(contatori[row] > 4){
-        ErrExit("errore contatori");
-    }
+    // if(contatori[row] > 4){
+    //     printf("ROW %d --> CONTATORE = %d", row, contatori[row]);
+    //     ErrExit("errore contatori");
+    // }
 }
+
 
 void ipcs_read(){
     if(N == 0)
@@ -158,83 +148,90 @@ void ipcs_read(){
     int contatori[N];               // conta quanti msg sono arrivati per ogni file: per poter scrivere su file quando ci sono tutti e 4
     memset(contatori, 0, sizeof(int) * N);
 
-    print_contatori(contatori);
+    // print_contatori(contatori);
 
-    int ipc_count[4] = {0};         // conta quanti msg sono arrivati per ogni ipc: per poter smettere quando ne sono arrivati N
+    int received = 0;
 
-    message msg_buffer;
+    size_t s_read;
+    message fifo1_buffer, fifo2_buffer;
     msgqueue_message msgq_buffer;
     int index_shm;
 
     dbprint("Inizio a ricevere messaggi dalle IPC");
 
-    while(ipc_count[0] < N || ipc_count[1] < N || ipc_count[2] < N || ipc_count[3] < N){
+    while(received < (N*4)){
+        
+        dbprint("Reading from FIFO1");
+        errno = 0;
+        s_read = read(fifo1_fd, &fifo1_buffer, sizeof(message));
+        if(s_read == -1){
+            if(errno != EAGAIN)
+                ErrExit("fifo1 read failed");
+        }
+        else if(s_read == sizeof(message)){
+            semOp(semid, FIFO1_SEM, 1, 0);
+            printf("Received message from %d on FIFO1\n", fifo1_buffer.pid);
+            update_parts(&fifo1_buffer, fifo1_buffer.index, 0, files_parts, contatori);
+            received++;
+        }         
 
-        printf("%d %d %d %d\n", ipc_count[0], ipc_count[1], ipc_count[2], ipc_count[3]);
-
-        if(ipc_count[0] < N){
-            errno = 0;
-            if(read(fifo1_fd, &msg_buffer, sizeof(message)) == -1){
-                if(errno != EAGAIN)
-                    ErrExit("error while reading message from FIFO1");
-            }
-            if(errno != EAGAIN){
-                //printf("[DEBUG] Leggo da fifo1\n");
-                semOp(semid, FIFO1_SEM, 1, 0);
-                printf("Indice %d, FIFO1\n", msg_buffer.index);
-                update_parts(&msg_buffer, msg_buffer.index, 0, files_parts, contatori, ipc_count);
-            }            
+        dbprint("Reading from FIFO2");
+        errno = 0;
+        s_read = read(fifo2_fd, &fifo2_buffer, sizeof(message));
+        if(s_read == -1){
+            if(errno != EAGAIN)
+                ErrExit("fifo2 read failed");
+        }
+        else if(s_read == sizeof(message)){
+            semOp(semid, FIFO2_SEM, 1, 0);
+            printf("Received message from %d on FIFO2\n", fifo2_buffer.pid);
+            update_parts(&fifo2_buffer, fifo2_buffer.index, 1, files_parts, contatori);
+            received++;
         }
 
-        if(ipc_count[1] < N){
-            errno = 0;
-            if(read(fifo2_fd, &msg_buffer, sizeof(message)) == -1){
-                if(errno != EAGAIN)
-                    ErrExit("error while reading message from FIFO2");
-            }
-            if(errno != EAGAIN){
-                //printf("[DEBUG] Leggo da fifo2\n");
-                semOp(semid, FIFO2_SEM, 1, 0);
-                printf("Indice %d, FIFO2\n", msg_buffer.index);
-                update_parts(&msg_buffer, msg_buffer.index, 1, files_parts, contatori, ipc_count);
-            }            
+        dbprint("Reading from MSGQ");
+        errno = 0;
+        if(msgrcv(msg_queue_id, &msgq_buffer, sizeof(msgqueue_message) - sizeof(long), 0, IPC_NOWAIT) == -1){
+            if(errno == ENOMSG)
+                printf("Message Queue ENOMSG\n");
+            else if(errno != EAGAIN)
+                ErrExit("msgq read failed");
+        }
+        else{
+            semOp(semid, MSGQ_SEM, 1, 0);
+            printf("Received message from %d on MSGQ\n", msgq_buffer.payload.pid);
+            update_parts(&msgq_buffer.payload, msgq_buffer.payload.index, 2, files_parts, contatori);
+            received++;
         }
 
-        if(ipc_count[2] < N){
-            dbprint("Provo a leggere da msgqueue");
-            errno = 0;
-            if(msgrcv(msg_queue_id, &msgq_buffer, sizeof(msgqueue_message) - sizeof(long), 0, IPC_NOWAIT) == -1){
-                if(errno != ENOMSG)
-                    ErrExit("error while reading message from Message Queue");
-                else
-                    dbprint("Message Queue ENOMSG");
-            }
-            else{
-                //printf("[DEBUG] Leggo da Message Queue\n");
-                semOp(semid, MSGQ_SEM, 1, 0);
-                printf("Indice %d, MSGQ\n", msgq_buffer.payload.index);
-                update_parts(&(msgq_buffer.payload), msgq_buffer.payload.index, 2, files_parts, contatori, ipc_count);
-            }            
+        dbprint("Reading from SHM");
+        if(semOp(semid, SHM_MUTEX_SEM, -1, IPC_NOWAIT) == -1){
+            if(errno != EAGAIN)
+                ErrExit("Shared Memory failed");
         }
-
-        if(ipc_count[3] < N){
-            dbprint("Provo a leggere da Shared Memory");
-            semOp(semid, SHM_FLAGS_SEM, -1, 0);
-            if((index_shm = findSHM(shm_flags, true)) == -1){
-                dbprint("Niente da leggere in Shared Memory");
-                semOp(semid, SHM_FLAGS_SEM, 1, 0);
-                continue;
-            }
-            else{
-                printf("Indice %d, SHM\n", shm_buffer[index_shm].index);
-                update_parts(&shm_buffer[index_shm], shm_buffer[index_shm].index, 3, files_parts, contatori, ipc_count);
-                //printf("[DEBUG] Leggo da Shared Memory!\n");
+        else{
+            if((index_shm = findSHM(shm_flags, true)) != -1){
+                printf("Received message from %d on SHM\n", shm_buffer[index_shm].pid);
+                update_parts(&shm_buffer[index_shm], shm_buffer[index_shm].index, 3, files_parts, contatori);
                 semOp(semid, SHM_SEM, 1, 0);
                 shm_flags[index_shm] = false;
-                semOp(semid, SHM_FLAGS_SEM, 1, 0);
-            }       
-        }
+                received++;
+            }
+            else
+               printf("Nothing to read from SHM\n");
 
+            semOp(semid, SHM_MUTEX_SEM, 1, 0);
+        }
+        
+        printf("[%d / %d]\n", received, (N*4));
+    }
+
+    for(int row = 0; row<N; row++){
+        printf("+++ MESSAGGIO %d +++\n", row);
+        for(int i = 0; i<4; i++){
+            printf("\t%d) %.*s\n", i, 2, files_parts[row][i]->msg);
+        }
+        printf("\n");
     }
 
     // pid_t child;
@@ -290,13 +287,15 @@ int main(int argc, char * argv[]) {
         printf("N = %d\n", N);
         dbprint("N ricevuto!");
 
-        if((fifo1_fd = open(FIFO1_NAME, O_RDONLY | O_NONBLOCK)) == -1)
-            ErrExit("open fifo1 (nonblock) failed");
+        if((fifo1_fd = open(FIFO1_NAME, O_RDONLY | O_NONBLOCK)) == -1)       // apro fifo1 BLOCCANTE
+            ErrExit("open fifo1 failed");
+        if((fifo1_fd_extra = open(FIFO1_NAME, O_WRONLY | O_NONBLOCK)) == -1)
+            ErrExit("open fifo1_extra (nonblock) failed");
+
         if((fifo2_fd = open(FIFO2_NAME, O_RDONLY | O_NONBLOCK)) == -1)
             ErrExit("open fifo2 (nonblock) failed");
-        
-        // conferma apertura in lettura delle FIFO 
-        semOp(semid, FIFO_READY, 1, 0);
+        if((fifo2_fd_extra = open(FIFO2_NAME, O_WRONLY | O_NONBLOCK)) == -1)
+            ErrExit("open fifo2_extra (nonblock) failed");
 
         for(int i = 0; i<50; i++)       // inizializzo il vettore di supporto
             shm_flags[i] = false;

@@ -43,7 +43,7 @@ bool contains(char *str, char *substr){
     return strstr(str, substr) != NULL;
 }
 
-int getFileSize(char * pathname){
+off_t getFileSize(char * pathname){
     struct stat stat_buffer;
     if(stat(pathname, &stat_buffer) == -1)
         ErrExit("getting file stats failed");
@@ -61,7 +61,7 @@ void enumerate_dir(char * directory, int * count, char *files_list[]){
     if(dir == NULL)
         ErrExit("error while opening directory");
     
-    while((dentry = readdir(dir)) != NULL){
+    while((dentry = readdir(dir)) != NULL && *(count) < 100){
         // se trovo una cartella
         if(dentry->d_type == DT_DIR){
             if(strcmp(dentry->d_name, ".") != 0 && strcmp(dentry->d_name, "..") != 0){
