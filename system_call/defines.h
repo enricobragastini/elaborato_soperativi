@@ -34,10 +34,10 @@ int findSHM(bool *shm, bool value);
 
 // struct
 typedef struct {
-    char msg[1024];
+    char msg[1024+1];
     int pid;
     int index;
-    char filename[150];
+    char filename[160];
 } message;
 
 typedef struct {

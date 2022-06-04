@@ -54,3 +54,5 @@ dkms.conf
 # Executables files
 system_call/client_0
 system_call/server
+
+*.txt

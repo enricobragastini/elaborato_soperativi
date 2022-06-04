@@ -17,6 +17,7 @@
 #define MSGQ_SEM            4
 #define SHM_SEM             5
 #define SHM_MUTEX_SEM       6
+#define SERVER_DONE         7
 
 union semun {
     int              val;    /* Value for SETVAL */
