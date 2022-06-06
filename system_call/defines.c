@@ -55,12 +55,10 @@ bool contains(char *str, char *substr){
 off_t getFileSize(char * pathname){
     struct stat stat_buffer;
     if(stat(pathname, &stat_buffer) == -1){
-        printf("%s\n", pathname);
+        printf("stat error: %s\n", pathname);
         ErrExit("getting file stats failed");
     }
-    
-    off_t size = stat_buffer.st_size;
-    return size;
+    return stat_buffer.st_size;
 }
 
 void enumerate_dir(char * directory, int * count, char *files_list[]){
@@ -76,20 +74,20 @@ void enumerate_dir(char * directory, int * count, char *files_list[]){
         // se trovo una cartella
         if(dentry->d_type == DT_DIR){
             if(strcmp(dentry->d_name, ".") != 0 && strcmp(dentry->d_name, "..") != 0){
-                char * new_dir = (char *)calloc(strlen(directory) + strlen(dentry->d_name) + 2, sizeof(char));
-                sprintf(new_dir, "%s/%s", directory, dentry->d_name);
+                char * new_dir = (char *)calloc(PATH_MAX, sizeof(char));
+                snprintf(new_dir, PATH_MAX, "%s/%s", directory, dentry->d_name);
                 enumerate_dir(new_dir, count, files_list);              // ricerca ricorsiva
                 free(new_dir);
             }
         }
         // se trovo un file (che ha un corretto filename)
         if(dentry->d_type == DT_REG && hasValidFilename(dentry->d_name) && !contains(dentry->d_name, "_out")){
-            char filepath[strlen(directory) + strlen(dentry->d_name) + 1]; 
-            sprintf(filepath, "%s/%s", directory, dentry->d_name);
+            char filepath[PATH_MAX]; 
+            snprintf(filepath,PATH_MAX, "%s/%s", directory, dentry->d_name);
 
             if(getFileSize(filepath) < 4096){
                 // alloco spazio per il suo filename
-                files_list[*count] = (char *)calloc(strlen(directory) + strlen(dentry->d_name) + 2, sizeof(char));
+                files_list[*count] = (char *)calloc(PATH_MAX, sizeof(char));
                 strcpy(files_list[*count], filepath);   // salvo il suo filename
                 (*count)++;                             // e aggiorno il conteggio
             }

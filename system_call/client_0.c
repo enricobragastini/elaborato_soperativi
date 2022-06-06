@@ -76,14 +76,6 @@ void ipcs_write(message messages[4]){
     msgq_msg.mtype = 1;
     msgq_msg.payload = messages[2];
 
-    bool valid = true;
-    for(int i = 0; i<4; i++){
-        if(strlen(messages[i].msg) <= 0)
-            valid = false;
-    }
-    if(!valid)
-        ErrExit("Message length < 0!");
-
     bool fifo1, fifo2, msgq, shm;
     fifo1 = fifo2 = msgq = shm = false;
 
@@ -155,7 +147,13 @@ void ipcs_write(message messages[4]){
 
 void child(int index){
     char * filepath = files_list[index];            // path file da leggere
-        
+
+    if (access(filepath, F_OK) != 0){
+        char err[PATH_MAX+100];
+        sprintf(err, "file doesn't exists: %s", filepath);
+        ErrExit(err);
+    }
+
     off_t charCount = getFileSize(filepath);        // dimensione totale del file
     if (charCount < 4)
         exit(0);
@@ -195,8 +193,7 @@ void child(int index){
 
     ipcs_write(messages);
 
-    // for(int i = 0; i<4; i++)
-    //     free(messages[i]);
+    free(filepath);
 
     printf("<client_%d> Ho concluso\n", getpid());
     exit(0);
@@ -216,6 +213,7 @@ void sigIntHandler(){
     printf("Ciao %s, ora inizio l'invio dei file contenuti in %s\n", getUsername(), workingDirectory); 
 
     // recupero N e la lista dei file da processare
+    N = 0;
     enumerate_dir(workingDirectory, &N, files_list);
 
     printf("<client_0> Ho trovato N=%d file sendme_\n", N);
@@ -284,9 +282,6 @@ void sigIntHandler(){
         close(fifo1_fd);
         close(fifo2_fd);
 
-        for(int i = 0; i<N; i++)
-            free(files_list[i]);
-
         semOp(server_semid, SERVER_DONE, -1, 0);  // Attende terminazione del server
 
         msgqueue_message end_msg;
@@ -302,10 +297,6 @@ void sigUsr1Handler(){
 }
 
 int main(int argc, char * argv[]) {
-
-    printf("DIMENSIONE CHAR = %ld", sizeof(char));
-    printf("DIMENSIONE MESSAGE = %ld bytes\n", sizeof(message));
-    printf("DIMENSIONE PIPE_BUF = %d bytes\n", PIPE_BUF);
 
     // controllo il numero di parametri in input
     if (argc != 2) {
