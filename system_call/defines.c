@@ -6,6 +6,7 @@
 #include "err_exit.h"
 #include <dirent.h>
 #include <linux/limits.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -67,6 +68,8 @@ void enumerate_dir(char * directory, int * count, char *files_list[]){
     
     dir = opendir(directory);       // apro la cartella
 
+    *(count) = 0;
+
     if(dir == NULL)
         ErrExit("error while opening directory");
     
@@ -85,7 +88,8 @@ void enumerate_dir(char * directory, int * count, char *files_list[]){
             char filepath[PATH_MAX]; 
             snprintf(filepath,PATH_MAX, "%s/%s", directory, dentry->d_name);
 
-            if(getFileSize(filepath) < 4096){
+            size_t charCount = getFileSize(filepath);
+            if(charCount < 4096 && !(charCount < 4 || (charCount > 4 && charCount < 7) || charCount == 9)){
                 // alloco spazio per il suo filename
                 files_list[*count] = (char *)calloc(PATH_MAX, sizeof(char));
                 strcpy(files_list[*count], filepath);   // salvo il suo filename

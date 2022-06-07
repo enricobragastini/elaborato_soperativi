@@ -50,12 +50,24 @@ int create_sem_set(){
 
 void remove_ipcs(){
     printf("<server> CTRL+C ricevuto: elimino le IPC...\n");
-    close(fifo1_fd);
+
+    close(fifo1_fd);                        // chiusura fifo
     close(fifo1_fd_extra);
     close(fifo2_fd);
     close(fifo2_fd_extra);
     unlink(FIFO1_NAME);
     unlink(FIFO2_NAME);
+
+    free_shared_memory(shm_buffer);         // chiusura shared memory
+    free_shared_memory(shm_flags);
+    remove_shared_memory(shmid);
+    remove_shared_memory(shm_flags_id);
+
+    msgctl(msg_queue_id, IPC_RMID, NULL);   // chiusura msg queue
+
+    if (semctl(semid, 0 /*ignored*/, IPC_RMID, NULL) == -1)
+        ErrExit("semctl IPC_RMID failed");
+
     printf("<server> Termino.\n");
     exit(0);
 }
@@ -73,11 +85,7 @@ void write_on_file(int row, message * files_parts[N][4]){
 
     char path_out[PATH_MAX];                            // nome file output (con '_out')
 
-    char * point;
-    if((point = strrchr(path_in,'.')) == NULL )
-        ErrExit("strrchr failed");
-
-    strncpy(path_out, path_in, strlen(path_in)-4);
+    strncpy(path_out, path_in, strlen(path_in) - 4);
     path_out[strlen(path_in)-4] = '\0';
     strcat(path_out, "_out.txt");
 
@@ -88,20 +96,21 @@ void write_on_file(int row, message * files_parts[N][4]){
         ErrExit("error while opening output file");
 
     char * out_str;
+    int size;
     for(int i = 0; i<4; i++){
-        int size = snprintf(NULL, 0, "[Parte %d, del file %s, spedita dal processo %d tramite %s]", 
-                i, files_parts[row][i]->filename, files_parts[row][i]->pid, ipcs_names[i]) + 1;
+        size = snprintf(NULL, 0, "[Parte %d, del file %s, spedita dal processo %d tramite %s]",
+                i, files_parts[row][i]->filename, files_parts[row][i]->pid, ipcs_names[i]) + 1;     // Calcolo dimensione stringa intestazione
 
         out_str = (char *) malloc(size * sizeof(char));
 
-        snprintf(out_str, size, "[Parte %d, del file %s, spedita dal processo %d tramite %s]", 
-                i, files_parts[row][i]->filename, files_parts[row][i]->pid, ipcs_names[i]);
+        snprintf(out_str, size, "[Parte %d, del file %s, spedita dal processo %d tramite %s]",      // Scrive stringa su buffer
+                i, files_parts[row][i]->filename, files_parts[row][i]->pid, ipcs_names[i]);         
 
 
-        write(fd, out_str, strlen(out_str));
+        write(fd, out_str, strlen(out_str));        // Intestazione su file
         write(fd, "\n", strlen("\n"));
 
-        write(fd, &files_parts[row][i]->msg, strlen(files_parts[row][i]->msg));
+        write(fd, &files_parts[row][i]->msg, strlen(files_parts[row][i]->msg));     // Porzione di messaggio
         write(fd, "\n", strlen("\n"));
 
         if(i != 3)
@@ -125,16 +134,16 @@ void update_parts(message * msg, int row, int ipc_index, message * files_parts[N
             free(files_parts[row][i]);      // Libera le aree di memoria occupate dai messaggi
     }
 
-    if(contatori[row] > 4){
-        printf("ROW %d --> CONTATORE = %d", row, contatori[row]);
-        ErrExit("errore contatori");
-    }
+    // if(contatori[row] > 4){
+    //     printf("ROW %d --> CONTATORE = %d", row, contatori[row]);
+    //     ErrExit("errore contatori");
+    // }
 }
 
 
 void ipcs_read(){
-    if(N == 0)
-        return;
+    // if(N == 0)
+    //     return;
     message * files_parts[N][4];     // struttura dati che accoglie i messaggi
 
     int contatori[N];               // conta quanti msg sono arrivati per ogni file: per poter scrivere su file quando ci sono tutti e 4
@@ -210,7 +219,7 @@ void ipcs_read(){
             semOp(semid, SHM_MUTEX_SEM, 1, 0);
         }
 
-        printf("[%d / %d]\n", received, (N*4));
+        printf("<server> Messaggi ricevuti: [%d / %d]\n", received, (N*4));
     }
 }
 
@@ -252,23 +261,32 @@ int main(int argc, char * argv[]) {
 
 
     while(true){
+        errno = 0;
+        N = 0;
+
+        printf("<server> Apro FIFO1...\n");
         if((fifo1_fd = open(FIFO1_NAME, O_RDONLY)) == -1)       // apro fifo1 BLOCCANTE
             ErrExit("open fifo1 failed");
-        if(read(fifo1_fd, &N, sizeof(int)) != sizeof(int))     // leggo N da fifo1
-            ErrExit("read fifo1 failed");                  
+
+        printf("<server> Attendo N su FIFO1...\n");
+        while(read(fifo1_fd, &N, sizeof(int)) != sizeof(int));     // leggo N da fifo1
+        //     printf("Errore lettura N da fifo1:  N=%d\n", N);
+        //     ErrExit("read fifo1 failed");                  
+        // }
         close(fifo1_fd);                                        // chiudo fifo1
+
         printf("<server> Ho ricevuto N = %d dal client su FIFO1\n", N);
 
         if(N > 0){
-            if((fifo1_fd = open(FIFO1_NAME, O_RDONLY | O_NONBLOCK)) == -1)       // apro fifo1 BLOCCANTE
+            if((fifo1_fd = open(FIFO1_NAME, O_RDONLY | O_NONBLOCK)) == -1)
                 ErrExit("open fifo1 failed");
-            if((fifo1_fd_extra = open(FIFO1_NAME, O_WRONLY | O_NONBLOCK)) == -1)
+            if((fifo1_fd_extra = open(FIFO1_NAME, O_WRONLY | O_NONBLOCK)) == -1)        // Evita EOF nella fifo
                 ErrExit("open fifo1_extra (nonblock) failed");
             printf("<server> Ho aperto FIFO1 e FIFO1_EXTRA non bloccanti\n");
 
             if((fifo2_fd = open(FIFO2_NAME, O_RDONLY | O_NONBLOCK)) == -1)
                 ErrExit("open fifo2 (nonblock) failed");
-            if((fifo2_fd_extra = open(FIFO2_NAME, O_WRONLY | O_NONBLOCK)) == -1)
+            if((fifo2_fd_extra = open(FIFO2_NAME, O_WRONLY | O_NONBLOCK)) == -1)        // Evita EOF nella fifo
                 ErrExit("open fifo2_extra (nonblock) failed");
             printf("<server> Ho aperto FIFO2 e FIFO2_EXTRA non bloccanti\n");
 
@@ -285,7 +303,8 @@ int main(int argc, char * argv[]) {
             msgqueue_message end_msg;
             end_msg.mtype = 1;
             strcpy(end_msg.payload.msg, "SERVER ENDED");
-            if (msgsnd(msg_queue_id, &end_msg, sizeof(msgqueue_message) - sizeof(long), 0) != -1)
+
+            if (msgsnd(msg_queue_id, &end_msg, sizeof(msgqueue_message) - sizeof(long), 0) != -1)       // BLOCCANTE!
                 printf("<server> Ho inviato il messaggio di fine su MSGQ\n");
             else
                 ErrExit("msgsnd failed (end_msg)");

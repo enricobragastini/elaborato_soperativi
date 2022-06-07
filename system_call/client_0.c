@@ -155,13 +155,12 @@ void child(int index){
     }
 
     off_t charCount = getFileSize(filepath);        // dimensione totale del file
-    if (charCount < 4)
-        exit(0);
 
     int filePartsSize[4];                           // dimensione delle quattro parti del file
 
     // calcolo le dimensioni delle rispettive quattro porzioni di file
     int baseSize = (charCount % 4 == 0) ? (charCount / 4) : ((charCount / 4) + 1);
+
     filePartsSize[0] = filePartsSize[1] = filePartsSize[2] = baseSize;    
     filePartsSize[3] = charCount - (baseSize * 3);
 
@@ -175,14 +174,11 @@ void child(int index){
     // divido il file in 4 messaggi
     message messages[4];
     for(int i = 0; i < 4; i++){
-        // messages[i] = malloc(sizeof(message));      // alloco lo spazio necessario
-        // if(messages[i] == NULL)
-            // ErrExit("MALLOC failed");
         messages[i].index = index;
         messages[i].pid = getpid();                // salvo il pid
         strcpy(messages[i].filename, filepath);    // salvo il path del file
 
-        if((read(file_fd, messages[i].msg, sizeof(char) * filePartsSize[i])) != sizeof(char) * filePartsSize[i])
+        if((read(file_fd, messages[i].msg, (sizeof(char) * filePartsSize[i]))) != (sizeof(char) * filePartsSize[i]))
             ErrExit("couldn't read file properly");
         messages[i].msg[filePartsSize[i]] = '\0';
     }
@@ -216,83 +212,90 @@ void sigIntHandler(){
     N = 0;
     enumerate_dir(workingDirectory, &N, files_list);
 
-    printf("<client_0> Ho trovato N=%d file sendme_\n", N);
 
+    if(N == 0){
+        printf("<client_0> Nessun file sendme_ trovato!\n");
+        return;
+    }
+
+    printf("<client_0> Ho trovato N=%d file sendme_\n", N);
 
     if((fifo1_fd = open(fifo1_path, O_WRONLY)) == -1)       // apro fifo1 BLOCCANTE
         ErrExit("open fifo1 failed");
-    printf("<client_0> Ho aperto FIFO1\n");
+    printf("<client_0> Ho aperto FIFO1 su %s\n", fifo1_path);
 
-    if(write(fifo1_fd, &N, sizeof(int)) != sizeof(int))     // scrivo N su fifo1
+    while(write(fifo1_fd, &N, sizeof(int)) != sizeof(int))     // scrivo N su fifo1
         ErrExit("write fifo1 failed");
     printf("<client_0> Ho inviato N su FIFO1\n"); 
 
-    if(N > 0){
-        if((fifo2_fd = open(fifo2_path, O_WRONLY)) == -1)
-            ErrExit("open fifo2 failed");
-        printf("<client_0> Ho aperto FIFO2\n");
 
+    if((fifo2_fd = open(fifo2_path, O_WRONLY)) == -1)
+        ErrExit("open fifo2 failed");
+    printf("<client_0> Ho aperto FIFO2 su %s\n", fifo2_path);
 
-        server_semid = semget(SEMAPHORE_KEY, 6, S_IRUSR | S_IWUSR);
-        if(server_semid == -1)
-            ErrExit("semget error");
-        printf("<client_0> Ho ricevuto il set di semafori del server \n");
-        
-        // message queue
-        msg_queue_id = msgget(MSG_QUEUE_KEY, S_IRUSR | S_IWUSR);
-        printf("<client_0> Ho aperto la MESSAGE QUEUE \n");
+    // set semafori del server
+    server_semid = semget(SEMAPHORE_KEY, 6, S_IRUSR | S_IWUSR);
+    if(server_semid == -1)
+        ErrExit("semget error");
+    printf("<client_0> Ho ricevuto il set di semafori del server \n");
+    
+    // message queue
+    msg_queue_id = msgget(MSG_QUEUE_KEY, S_IRUSR | S_IWUSR);
+    printf("<client_0> Ho aperto la MESSAGE QUEUE \n");
 
-        // shared memory
-        shmid = alloc_shared_memory(SHM_KEY, SHM_SIZE);
-        shm_address = (message *) get_shared_memory(shmid, 0);
+    // shared memory
+    shmid = alloc_shared_memory(SHM_KEY, SHM_SIZE);
+    shm_address = (message *) get_shared_memory(shmid, 0);
 
-        // vettore di supporto alla shared memory
-        shm_flags_id = alloc_shared_memory(SHM_FLAGS_KEY, SHM_FLAGS_SIZE);
-        shm_flags_address = (bool *) get_shared_memory(shm_flags_id, 0);
-        printf("<client_0> Ho inizializzato la SHARED MEMORY e il suo vettore di supporto \n");
+    // vettore di supporto alla shared memory
+    shm_flags_id = alloc_shared_memory(SHM_FLAGS_KEY, SHM_FLAGS_SIZE);
+    shm_flags_address = (bool *) get_shared_memory(shm_flags_id, 0);
+    printf("<client_0> Ho inizializzato la SHARED MEMORY e il suo vettore di supporto \n");
 
-        semInitVal[0] = N;
-        client_semid = create_sem_set();
-        printf("<client_0> Ho creato il set di semafori del client\n");
+    // set semafori del client
+    semInitVal[0] = N;
+    client_semid = create_sem_set();
+    printf("<client_0> Ho creato il set di semafori del client\n");
 
-        printf("<client_0> Attendo il messaggio di conferma dal server su SHM\n");
-        semOp(server_semid, WAIT_DATA, -1, 0);      // attende scrittura del server su Shared Memory
-        printf("<client_0> Messaggio ricevuto su SHM: %s\n", shm_address[0].msg);
+    // attendo conferma su shared memory
+    printf("<client_0> Attendo il messaggio di conferma dal server su SHM\n");
+    semOp(server_semid, WAIT_DATA, -1, 0);      // sincronizzazione Shared Memory
+    printf("<client_0> Messaggio ricevuto su SHM: %s\n", shm_address[0].msg);
 
-        printf("<client_0> Genero %d figli\n", N);
-        // genero N processi figli
-        for(int i = 0; i<N; i++){
-            pid_t pid = fork();
-            switch (pid) {
-                case -1:
-                    ErrExit("fork failed");
-                    break;
-                case 0:
-                    child(i);
-                    break;
-                default:
-                    break;
-            }
+    printf("<client_0> Genero %d figli\n", N);
+    // genero N processi figli
+    for(int i = 0; i<N; i++){
+        pid_t pid = fork();
+        switch (pid) {
+            case -1:
+                ErrExit("fork failed");
+                break;
+            case 0:
+                child(i);
+                break;
+            default:
+                break;
         }
-
-        // Attende la terminazione dei figli
-        pid_t child;
-        while ((child = wait(NULL)) != -1);
-
-        close(fifo1_fd);
-        close(fifo2_fd);
-
-        semOp(server_semid, SERVER_DONE, -1, 0);  // Attende terminazione del server
-
-        msgqueue_message end_msg;
-        if(msgrcv(msg_queue_id, &end_msg, sizeof(msgqueue_message) - sizeof(long), 0, 0) != -1)
-            printf("<client_0> ricevuto messaggio su MSGQ: %s\n", end_msg.payload.msg);
-        else
-            ErrExit("msgrcv failed (end_msg)");
     }
+
+    // Attende la terminazione dei figli
+    pid_t child;
+    while ((child = wait(NULL)) != -1);
+
+    semOp(server_semid, SERVER_DONE, -1, 0);  // Attende terminazione del server
+
+    close(fifo1_fd);
+    close(fifo2_fd);
+
+    msgqueue_message end_msg;
+    if(msgrcv(msg_queue_id, &end_msg, sizeof(msgqueue_message) - sizeof(long), 0, 0) != -1)
+        printf("<client_0> ricevuto messaggio su MSGQ: %s\n", end_msg.payload.msg);
+    else
+        ErrExit("msgrcv failed (end_msg)");
 }
 
 void sigUsr1Handler(){
+    printf("<client_0> Ho ricevuto SIGUSR1. Termino...\n");
     exit(0);
 }
 

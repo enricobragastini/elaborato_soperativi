@@ -85,13 +85,12 @@ if [[ "$*" == *"run"* ]]; then
 
     echo ""
 
-    # ./server 1> /dev/null 2> $server_err_log &
-    ./server 1> logserver.log 2> $server_err_log &
+    ./server 1> /dev/null 2> $server_err_log &
     PID_SERVER=$!
 
     sleep 1
 
-    ./client_0 "$PWD" 1> logclient.log 2> $client_err_log &
+    ./client_0 "$PWD" 1> /dev/null 2> $client_err_log &
     PID_CLIENT=$!
 
     trap "ctrlc $PID_SERVER $PID_CLIENT $server_err_log $client_err_log" SIGINT
