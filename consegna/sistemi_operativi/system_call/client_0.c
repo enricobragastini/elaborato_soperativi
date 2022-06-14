@@ -328,8 +328,9 @@ int main(int argc, char * argv[]) {
     // Controllo l'esistenza della cartella
     errno = 0;
     DIR *dir = opendir(argv[1]);
-    if(dir)
+    if(dir){
         closedir(dir);
+    }
     else if(errno == ENOENT){
         printf("<client_0> ERRORE: La directory inserita non esiste\n");
         return 1;

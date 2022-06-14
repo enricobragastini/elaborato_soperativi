@@ -1,0 +1,22 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/gianni/Documents/Mentos/mentos/boot.asm
+
+/home/gianni/Documents/Mentos/mentos/src/descriptor_tables/exception.asm
+
+/home/gianni/Documents/Mentos/mentos/src/descriptor_tables/gdt.asm
+
+/home/gianni/Documents/Mentos/mentos/src/descriptor_tables/idt.asm
+
+/home/gianni/Documents/Mentos/mentos/src/descriptor_tables/interrupt.asm
+
+/home/gianni/Documents/Mentos/mentos/src/descriptor_tables/tss.asm
+
+/home/gianni/Documents/Mentos/mentos/src/process/user.asm
+
